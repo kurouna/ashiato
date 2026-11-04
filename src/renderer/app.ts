@@ -544,7 +544,12 @@ function syncProviderBoxes() {
   $('claudeBox').classList.toggle('hidden', local);
   $('localBox').classList.toggle('hidden', !local);
 }
-radios().forEach((r) => r.addEventListener('change', syncProviderBoxes));
+radios().forEach((r) =>
+  r.addEventListener('change', () => {
+    syncProviderBoxes();
+    if (r.checked && r.value === 'local') probeLocal();
+  }),
+);
 
 function fillSettings() {
   radios().forEach((r) => (r.checked = r.value === settings.provider));
@@ -562,7 +567,9 @@ function fillSettings() {
   if (!models.some((m) => m.id === settings.model)) models.push({ id: settings.model, label: settings.model });
   $<HTMLSelectElement>('model').innerHTML = models.map((m) => `<option value="${esc(m.id)}" ${m.id === settings.model ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
   $<HTMLInputElement>('localUrl').value = settings.localBaseUrl;
-  $<HTMLInputElement>('localModel').value = settings.localModel;
+  localModels = [];
+  renderModelSelect(settings.localModel);
+  $('localState').textContent = '';
   $<HTMLInputElement>('localKey').placeholder = settings.hasLocalKey ? '保存済み' : '不要なら空のまま';
   $<HTMLInputElement>('redact').checked = settings.redact;
   $('folderList').innerHTML =
@@ -579,6 +586,7 @@ function fillSettings() {
 function openSettings() {
   fillSettings();
   dlg.showModal();
+  if (settings.provider === 'local') probeLocal();
 }
 $('openSettings').addEventListener('click', openSettings);
 $('closeSettings').addEventListener('click', () => dlg.close());
@@ -615,24 +623,64 @@ $('clearLocalKey').addEventListener('click', async () => {
   settings = await api.setSecret('local', null);
   fillSettings();
 });
-$('testLocal').addEventListener('click', async () => {
+// Local model picker: a real <select> filled from the server, plus a free-text escape hatch.
+// (A datalist filters its suggestions by the text already in the box, so a prefilled name hid every other model.)
+const MANUAL = '__manual__';
+let localModels: string[] = [];
+let probeSeq = 0;
+const modelSel = $<HTMLSelectElement>('localModelSel');
+const modelInput = $<HTMLInputElement>('localModel');
+
+function renderModelSelect(current: string) {
+  const opts = [...localModels];
+  if (current && !opts.includes(current)) opts.unshift(current);
+  const missing = (m: string) => localModels.length > 0 && !localModels.includes(m);
+  modelSel.innerHTML = [
+    ...(opts.length ? [] : [`<option value="" disabled>接続するとモデルの一覧が表示されます</option>`]),
+    ...opts.map((m) => `<option value="${esc(m)}">${esc(m)}${missing(m) ? '（サーバーに見つかりません）' : ''}</option>`),
+    `<option value="${MANUAL}">その他（モデル名を入力）…</option>`,
+  ].join('');
+  modelSel.value = current || opts[0] || '';
+  if (!modelSel.value && !opts.length) modelSel.selectedIndex = 0;
+  syncManual();
+}
+function syncManual() {
+  const manual = modelSel.value === MANUAL;
+  modelInput.classList.toggle('hidden', !manual);
+  if (manual) modelInput.focus();
+}
+const chosenModel = () => (modelSel.value === MANUAL ? modelInput.value.trim() : modelSel.value);
+modelSel.addEventListener('change', syncManual);
+
+async function probeLocal() {
   const url = $<HTMLInputElement>('localUrl').value.trim();
+  if (!url) return;
+  const seq = ++probeSeq;
+  const keep = chosenModel() || settings.localModel;
   $('localState').innerHTML = '<span class="spin"></span> 接続しています…';
   let res;
   try {
     res = await api.listLocalModels(url);
   } catch (err) {
-    return void ($('localState').innerHTML = `<span class="err">URL が不正です: ${esc(ipcMessage(err))}</span>`);
+    res = { ok: false as const, error: ipcMessage(err) };
   }
-  if (!res.ok) return void ($('localState').innerHTML = `<span class="err">${esc(res.error)}</span>`);
-  $('localModels').innerHTML = res.models.map((m) => `<option value="${esc(m)}"></option>`).join('');
+  if (seq !== probeSeq) return; // a newer probe (URL edited again) wins
+  if (!res.ok) {
+    localModels = [];
+    renderModelSelect(keep);
+    return void ($('localState').innerHTML = `<span class="err">${esc(res.error)}</span>`);
+  }
+  localModels = res.models;
+  renderModelSelect(keep && (res.models.includes(keep) || keep === settings.localModel) ? keep : (res.models[0] ?? ''));
   const host = new URL(url).hostname;
   const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host);
   $('localState').innerHTML =
-    `✓ 接続できました（モデル ${res.models.length} 個）` +
+    (res.models.length ? `✓ 接続できました（モデル ${res.models.length} 個）` : '⚠ 接続できましたが、モデルがありません。サーバー側でモデルを用意してください（例: ollama pull qwen3:14b）') +
     (!loopback && url.startsWith('http:') ? '<br><span class="err">⚠ この PC 外のサーバーへ暗号化されていない http で送信します。社内ネットワーク内か確認してください。</span>' : '');
-  if (!$<HTMLInputElement>('localModel').value && res.models[0]) $<HTMLInputElement>('localModel').value = res.models[0];
-});
+}
+$('testLocal').addEventListener('click', probeLocal);
+$('localUrl').addEventListener('change', probeLocal);
+$('localUrl').addEventListener('keydown', onEnter(probeLocal));
 $('addFolder').addEventListener('click', async () => {
   settings = await api.pickFolder();
   fillSettings();
@@ -662,7 +710,7 @@ $('saveSettings').addEventListener('click', async () => {
       provider: (radios().find((r) => r.checked)?.value ?? 'claude') as 'claude' | 'local',
       model: $<HTMLSelectElement>('model').value,
       localBaseUrl: $<HTMLInputElement>('localUrl').value.trim() || 'http://localhost:11434/v1',
-      localModel: $<HTMLInputElement>('localModel').value.trim(),
+      localModel: chosenModel(),
       redact: $<HTMLInputElement>('redact').checked,
       excludeKeywords: lines('exclude'),
       excludeApps: lines('excludeApps'),

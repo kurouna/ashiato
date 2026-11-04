@@ -39,7 +39,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 600,
     title: '足跡ジャーナル',
-    icon: makeIcon(64, false),
+    icon: appIcon(),
     autoHideMenuBar: true,
     show: false,
     webPreferences,
@@ -117,7 +117,7 @@ function refreshTray() {
   if (!tray) return;
   const s = store.getSettings();
   const until = s.paused && s.pausedUntil ? `（${new Date(s.pausedUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} まで）` : '';
-  tray.setImage(makeIcon(process.platform === 'darwin' ? 18 : 16, s.paused));
+  tray.setImage(trayIcon(s.paused));
   tray.setToolTip(s.paused ? `足跡ジャーナル — 一時停止中${until}` : '足跡ジャーナル — 記録中');
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -259,35 +259,18 @@ function registerIpc() {
   );
 }
 
-/** A small footprint glyph drawn into a BGRA bitmap, so the app ships without image assets. Grey while paused. */
-function makeIcon(size: number, paused: boolean) {
-  const buf = Buffer.alloc(size * size * 4);
-  const dots: [number, number, number][] = [
-    [0.5, 0.62, 0.26], // sole
-    [0.3, 0.3, 0.09],
-    [0.45, 0.22, 0.09],
-    [0.6, 0.22, 0.09],
-    [0.74, 0.3, 0.09],
-  ];
-  const [r, g, b] = paused ? [0x8b, 0x92, 0xa3] : [0xf5, 0xc9, 0x7a];
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const u = (x + 0.5) / size;
-      const v = (y + 0.5) / size;
-      let a = 0;
-      for (const [cx, cy, rad] of dots) {
-        const ry = cx === 0.5 && cy === 0.62 ? rad * 1.25 : rad;
-        const d = Math.hypot((u - cx) / rad, (v - cy) / ry);
-        a = Math.max(a, Math.min(1, Math.max(0, (1 - d) * size * rad * 0.9)));
-      }
-      const i = (y * size + x) * 4;
-      buf[i] = b;
-      buf[i + 1] = g;
-      buf[i + 2] = r;
-      buf[i + 3] = Math.round(a * 255);
-    }
+// Rendered from build/*.svg by scripts/gen-icon.mjs (npm run gen:icon).
+const iconDir = () => path.join(app.getAppPath(), 'resources', 'icons');
+const appIcon = () => nativeImage.createFromPath(path.join(iconDir(), 'icon.png'));
+
+/** Amber footprint while recording, slate while paused; one image per display scale. */
+function trayIcon(paused: boolean) {
+  const name = (size: number) => path.join(iconDir(), `tray-${paused ? 'paused-' : ''}${size}.png`);
+  const img = nativeImage.createFromPath(name(16));
+  for (const [size, scaleFactor] of [[20, 1.25], [24, 1.5], [32, 2]] as const) {
+    img.addRepresentation({ scaleFactor, buffer: fs.readFileSync(name(size)) });
   }
-  return nativeImage.createFromBitmap(buf, { width: size, height: size });
+  return img;
 }
 
 if (gotLock) {
@@ -338,7 +321,7 @@ if (gotLock) {
     });
     if (store.getSettings().onboarded) recorder.start();
 
-    tray = new Tray(makeIcon(process.platform === 'darwin' ? 18 : 16, store.getSettings().paused));
+    tray = new Tray(trayIcon(store.getSettings().paused));
     tray.on('click', showMain);
     refreshTray();
 

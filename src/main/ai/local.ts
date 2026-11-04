@@ -26,7 +26,12 @@ export class LocalProvider implements Provider {
   static async listModels(baseURL: string, apiKey?: string): Promise<string[]> {
     const client = new OpenAI({ baseURL, apiKey: apiKey || 'not-needed', timeout: 10_000, maxRetries: 0 });
     const ids: string[] = [];
-    for await (const m of client.models.list()) ids.push(m.id);
+    try {
+      for await (const m of client.models.list()) ids.push(m.id);
+    } catch (err) {
+      // name the URL being tested, not the one saved in settings
+      throw new AiStop(describeLocalError(err, baseURL) ?? String(err));
+    }
     return ids.sort();
   }
 

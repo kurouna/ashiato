@@ -1,3 +1,5 @@
+<img src="build/icon.svg" width="96" align="right" alt="足跡ジャーナルのアイコン" />
+
 # 足跡ジャーナル (Ashiato)
 
 PC での作業を**ローカルで自動記録**し、AI が「作業ブロックへの整理」「日報の下書き」「過去の作業への質問応答」をしてくれる Windows 向けデスクトップアプリです（Electron）。AI は **Claude API** と **ローカル LLM**（Ollama / LM Studio / vLLM などの OpenAI 互換サーバー）を切り替えて使えます。
@@ -46,10 +48,10 @@ PC での作業を**ローカルで自動記録**し、AI が「作業ブロッ�
 ![ローカル LLM の設定](docs/settings.png)
 
 1. [Ollama](https://ollama.com/) などを起動し、モデルを用意します（例: `ollama pull qwen3:14b`）
-2. ⚙ →「AI」で「ローカル LLM」を選び、サーバー URL を入力して「接続テスト」を押します
+2. ⚙ →「AI」で「ローカル LLM」を選びます。サーバー URL を確認すると、モデルの一覧が自動で読み込まれます（URL を変えたら「接続テスト」）
    - Ollama: `http://localhost:11434/v1`
    - LM Studio: `http://localhost:1234/v1`
-3. 表示されたモデルを選んで保存します
+3. 一覧からモデルを選んで保存します。一覧にないモデルは「その他（モデル名を入力）」で指定できます
 
 ツール呼び出しと JSON 出力に対応したモデル（Qwen3、Llama 3.1 以降、gpt-oss など）を推奨します。Ollama は既定のコンテキスト長が短いので、`OLLAMA_CONTEXT_LENGTH=32768` 以上に設定してください。
 
@@ -94,6 +96,7 @@ npm start
 
 ```bash
 npm run typecheck   # 型チェック
+npm run gen:icon    # build/icon.svg と build/tray.svg から各サイズのアイコンを生成
 npm test            # ユニットテスト（ローカル LLM はモックサーバーで検証）
 npm run dist -- --win nsis portable   # release/ にインストーラーとポータブル版
 ```

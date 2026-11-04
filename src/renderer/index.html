@@ -177,7 +177,10 @@
               <small class="muted">Ollama: http://localhost:11434/v1 ／ LM Studio: http://localhost:1234/v1 ／ vLLM などの社内サーバーも可</small>
               <small id="localState" class="muted"></small>
             </label>
-            <label>モデル <input id="localModel" list="localModels" placeholder="例: qwen3:14b" /><datalist id="localModels"></datalist></label>
+            <label>モデル
+              <select id="localModelSel"></select>
+              <input id="localModel" class="hidden" placeholder="モデル名を入力（例: qwen3:14b）" />
+            </label>
             <small class="muted">ツール呼び出しと JSON 出力に対応したモデル（Qwen3、Llama 3.1 以降、gpt-oss など）を推奨します。Ollama ではコンテキスト長を 32K 以上にしてください（OLLAMA_CONTEXT_LENGTH）。</small>
             <label>API キー（サーバーが必要とする場合のみ）
               <div class="row">

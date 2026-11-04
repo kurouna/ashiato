@@ -9,12 +9,14 @@
     "dev": "node build.mjs && electron . --inspect",
     "typecheck": "tsc -p .",
     "dist": "node build.mjs --prod && electron-builder",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "gen:icon": "node scripts/gen-icon.mjs"
   },
   "author": "Shinsaku Nakagawa",
   "license": "MIT",
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^26.6.6",
     "dompurify": "^3.4.17",
     "electron": "^45.2.2",
@@ -37,6 +39,7 @@
     "files": [
       "dist/**/*",
       "!dist/**/*.map",
+      "resources/**/*",
       "package.json"
     ],
     "directories": {
@@ -63,6 +66,7 @@
       "enableEmbeddedAsarIntegrityValidation": true,
       "onlyLoadAppFromAsar": true,
       "enableCookieEncryption": true
-    }
+    },
+    "icon": "build/icon.png"
   }
 }
