@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+    <title>足跡ジャーナル</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><ellipse cx="12" cy="15" rx="5.2" ry="6.4" /><circle cx="7" cy="6.8" r="1.9" /><circle cx="10.6" cy="4.8" r="1.9" /><circle cx="14.3" cy="4.8" r="1.9" /><circle cx="17.6" cy="6.8" r="1.9" /></svg>
+        <span>足跡ジャーナル</span>
+      </div>
+      <nav class="datenav">
+        <button id="prevDay" class="icon" title="前の日">‹</button>
+        <input type="date" id="datePick" />
+        <button id="nextDay" class="icon" title="次の日">›</button>
+        <button id="today" class="ghost">今日</button>
+      </nav>
+      <form id="memoForm" class="memo">
+        <input id="memoInput" placeholder="ひとことメモ（Ctrl+Alt+J でどこからでも）" autocomplete="off" />
+      </form>
+      <button id="recToggle" class="pill"><span class="dot"></span><span id="recLabel">記録中</span></button>
+      <button id="openSettings" class="icon" title="設定">⚙</button>
+    </header>
+
+    <main>
+      <section class="card timeline-card">
+        <div class="card-head">
+          <h2>タイムライン</h2>
+          <div class="legend" id="legend"></div>
+        </div>
+        <div id="timeline" class="timeline"></div>
+        <div id="empty" class="empty hidden">
+          <p>この日の記録はまだありません。</p>
+          <p class="muted">記録はバックグラウンドで自動的に進みます。⚙ から作業フォルダを登録すると、ファイル編集と git コミットも記録されます。</p>
+        </div>
+      </section>
+
+      <div class="cols">
+        <aside class="card stats">
+          <div class="kpis">
+            <div><span class="kpi" id="kpiActive">–</span><label>アクティブ</label></div>
+            <div><span class="kpi" id="kpiFiles">–</span><label>編集ファイル</label></div>
+            <div><span class="kpi" id="kpiCommits">–</span><label>コミット</label></div>
+          </div>
+          <h3>アプリ別</h3>
+          <ul id="appBars" class="bars"></ul>
+          <h3>コミット</h3>
+          <ul id="commitList" class="plain"></ul>
+          <h3>メモ</h3>
+          <ul id="memoList" class="plain"></ul>
+        </aside>
+
+        <section class="card ai">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="blocks">作業ブロック</button>
+            <button class="tab" data-tab="report">日報</button>
+            <button class="tab" data-tab="ask">足跡に聞く</button>
+            <span class="spacer"></span>
+            <button id="previewBtn" class="ghost small" title="Claude に送るデータを確認">送信内容を確認</button>
+          </div>
+
+          <div class="pane" data-pane="blocks">
+            <div class="pane-actions">
+              <button id="segmentBtn" class="primary">✦ AI で作業を整理</button>
+              <span id="segmentStatus" class="muted"></span>
+            </div>
+            <div id="blockList" class="blocks"></div>
+          </div>
+
+          <div class="pane hidden" data-pane="report">
+            <div class="pane-actions">
+              <button id="reportBtn" class="primary">✦ 日報を生成</button>
+              <button id="copyReport" class="ghost">Markdown をコピー</button>
+              <span id="reportStatus" class="muted"></span>
+            </div>
+            <details id="thinkingBox" class="thinking hidden"><summary>Claude の思考の要約</summary><div id="thinkingText"></div></details>
+            <article id="reportBody" class="md"></article>
+          </div>
+
+          <div class="pane hidden" data-pane="ask">
+            <div id="chatLog" class="chat">
+              <div class="suggest">
+                <p class="muted">記録をもとに Claude が答えます。例えば：</p>
+                <button class="chip">今日いちばん時間を使った作業は？</button>
+                <button class="chip">昨日の午後は何をしていた？</button>
+                <button class="chip">今週やったことを箇条書きでまとめて</button>
+              </div>
+            </div>
+            <form id="askForm" class="askbar">
+              <textarea id="askInput" rows="1" placeholder="足跡に質問する（Enter で送信、Shift+Enter で改行）"></textarea>
+              <button class="primary" id="askBtn">送信</button>
+              <button type="button" class="ghost" id="newChat" title="会話をリセット">新しい会話</button>
+            </form>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="tooltip" class="tooltip hidden"></div>
+
+    <dialog id="settingsDlg">
+      <form method="dialog" class="settings">
+        <h2>設定</h2>
+        <label>Claude API キー
+          <div class="row">
+            <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
+            <button type="button" id="saveKey" class="ghost">保存</button>
+            <button type="button" id="clearKey" class="ghost">削除</button>
+          </div>
+          <small id="keyState" class="muted"></small>
+        </label>
+        <label>モデル <select id="model"></select></label>
+        <label>記録するフォルダ（ファイル編集・git コミット）
+          <ul id="folderList" class="folders"></ul>
+          <button type="button" id="addFolder" class="ghost">フォルダを追加…</button>
+        </label>
+        <label>除外キーワード（ウィンドウタイトル・アプリ名に含まれると内容を記録しません。1 行に 1 つ）
+          <textarea id="exclude" rows="4"></textarea>
+        </label>
+        <div class="row">
+          <label>離席とみなす無操作時間（分） <input type="number" id="idleMin" min="1" max="60" /></label>
+          <label>サンプリング間隔（秒） <input type="number" id="poll" min="1" max="60" /></label>
+        </div>
+        <label>日報テンプレート <textarea id="template" rows="5"></textarea></label>
+        <label class="check"><input type="checkbox" id="openAtLogin" /> ログイン時に自動起動（パッケージ版のみ）</label>
+        <p class="muted small">記録データはこの PC にだけ保存されます。Claude に送られるのは、AI ボタンを押したときの要約済みタイムラインだけです。 <a href="#" id="openData">データフォルダを開く</a></p>
+        <div class="row end">
+          <button value="cancel" class="ghost">閉じる</button>
+          <button id="saveSettings" value="default" class="primary">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="previewDlg">
+      <form method="dialog" class="preview">
+        <h2>Claude に送るタイムライン</h2>
+        <p class="muted small">AI 機能を使うと、この要約テキスト（とテンプレート・作業ブロック）だけが Anthropic API に送られます。</p>
+        <pre id="previewText"></pre>
+        <div class="row end"><button class="primary">閉じる</button></div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>
