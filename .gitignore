@@ -3,3 +3,4 @@ dist/
 release/
 .demo-profile/
 *.log
+dist-test/

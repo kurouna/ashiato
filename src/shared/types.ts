@@ -37,20 +37,44 @@ export interface DayAi {
   model?: string;
 }
 
+export type ProviderKind = 'claude' | 'local';
+export type SecretName = 'claude' | 'local';
+
 export interface Settings {
+  provider: ProviderKind;
   model: string;
+  localBaseUrl: string;
+  localModel: string;
   watchFolders: string[];
   excludeKeywords: string[];
+  excludeApps: string[];
+  redact: boolean;
   idleMinutes: number;
   pollSeconds: number;
+  retentionDays: number;
   reportTemplate: string;
   paused: boolean;
+  pausedUntil: number | null;
   openAtLogin: boolean;
+  onboarded: boolean;
 }
 
 export interface PublicSettings extends Settings {
   hasApiKey: boolean;
   apiKeySource: 'saved' | 'env' | 'none';
+  hasLocalKey: boolean;
+  secretUnreadable: boolean;
+  encryptionAvailable: boolean;
+}
+
+export interface Status {
+  recording: boolean;
+  probeOk: boolean;
+  probeReason: string;
+  watchErrors: string[];
+  lastSampleAt: number | null;
+  shortcutOk: boolean;
+  destination: string;
 }
 
 export interface DayData {

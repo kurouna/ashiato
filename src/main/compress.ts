@@ -1,3 +1,4 @@
+import { defang, redact } from '../shared/redact';
 import { DayData, JournalEvent, evTime, hhmm } from '../shared/types';
 
 const MIN_SPAN_MS = 15_000;
@@ -8,7 +9,7 @@ const FILE_BUCKET_MS = 10 * 60_000;
  * Turn a day's raw events into a compact, time-ordered text the model can read.
  * Short window hops are folded into their neighbours; file edits are bucketed per 10 minutes.
  */
-export function compressDay(events: JournalEvent[], live?: DayData['live']): string {
+export function compressDay(events: JournalEvent[], live?: DayData['live'], opts: { redact?: boolean } = {}): string {
   const all = [...events];
   if (live) {
     const now = Date.now();
@@ -35,7 +36,7 @@ export function compressDay(events: JournalEvent[], live?: DayData['live']): str
   for (const s of spans) {
     if (s.end - s.start < MIN_SPAN_MS) continue;
     const mins = Math.max(1, Math.round((s.end - s.start) / 60000));
-    const text = s.idle ? '(離席)' : `[${s.app || '?'}] ${s.title || '(タイトルなし)'}`;
+    const text = s.idle ? '(離席)' : `[${defang(s.app || '?')}] ${defang(s.title) || '(タイトルなし)'}`;
     lines.push({ ts: s.start, text: `${hhmm(s.start)}–${hhmm(s.end)} (${mins}分) ${text}` });
   }
 
@@ -51,17 +52,18 @@ export function compressDay(events: JournalEvent[], live?: DayData['live']): str
   }
   for (const b of buckets.values()) {
     const paths = [...b.paths];
-    const shown = paths.slice(0, 12).join(', ') + (paths.length > 12 ? ` ほか${paths.length - 12}件` : '');
-    lines.push({ ts: b.ts, text: `${hhmm(b.ts)} ファイル編集 <${baseName(b.root)}>: ${shown}` });
+    const shown = paths.slice(0, 12).map(defang).join(', ') + (paths.length > 12 ? ` ほか${paths.length - 12}件` : '');
+    lines.push({ ts: b.ts, text: `${hhmm(b.ts)} ファイル編集 「${defang(baseName(b.root))}」: ${shown}` });
   }
 
   for (const e of all) {
-    if (e.t === 'commit') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git commit <${e.repo}> ${e.subject}` });
-    if (e.t === 'memo') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} 本人メモ: ${e.text}` });
+    if (e.t === 'commit') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git commit 「${defang(e.repo)}」 ${defang(e.subject)}` });
+    if (e.t === 'memo') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} 本人メモ: ${defang(e.text)}` });
   }
 
   lines.sort((a, b) => a.ts - b.ts);
-  return lines.map((l) => l.text).join('\n');
+  const text = lines.map((l) => l.text).join('\n');
+  return opts.redact ? redact(text) : text;
 }
 
 function baseName(p: string) {

@@ -9,6 +9,10 @@
   --accent-ink: #1b1608;
   --err: #f7768e;
   --radius: 12px;
+  --private: #3a3f4b;
+  --idle-bg: #20232b;
+  --idle-line: #3a3f4b;
+  --warn-bg: #3b2f12;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -21,6 +25,10 @@
     --muted: #6b7180;
     --accent: #c98a1b;
     --accent-ink: #ffffff;
+    --private: #c9ccd3;
+    --idle-bg: #eceae4;
+    --idle-line: #d6d2c8;
+    --warn-bg: #fff4d6;
     color-scheme: light;
   }
 }
@@ -159,3 +167,29 @@ a { color: var(--accent); }
 .memo-head { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .memo-pop input { width: 100%; font-size: 15px; }
 .memo-ok { font-size: 12px; color: #9ece6a; height: 16px; margin-top: 4px; }
+
+/* v0.0.1 additions */
+.timeline .idle-bg { fill: var(--idle-bg); }
+.timeline .idle-line { stroke: var(--idle-line); }
+.hint { margin: 4px 0 0; }
+.banner { background: var(--warn-bg); border-bottom: 1px solid var(--line); padding: 8px 18px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.banner button { align-self: flex-start; }
+.rec { position: relative; }
+.pill.broken .dot { background: var(--err); animation: none; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; min-width: 190px; box-shadow: 0 8px 24px #0005; }
+.menu button { border: none; background: transparent; text-align: left; border-radius: 6px; }
+.menu button:hover { background: var(--card2); }
+.danger { color: var(--err); }
+.card-head .danger { margin-left: 12px; }
+.dest { color: var(--muted); margin-right: 6px; }
+.editor { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.editor textarea { min-height: 320px; flex: 1; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px; margin: 0; }
+legend { font-weight: 600; padding: 0 6px; font-size: 13px; }
+.seg { display: flex; gap: 16px; }
+.seg label { flex-direction: row !important; align-items: center; gap: 6px !important; }
+.onboard { max-width: 640px; }
+.facts { display: grid; gap: 8px; }
+.facts > div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; background: var(--card2); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.facts b { color: var(--accent); }
+code { background: var(--card2); border-radius: 4px; padding: 0 4px; font-size: 12px; }

@@ -23,12 +23,18 @@ export class Recorder extends EventEmitter {
   private seenCommits = new Set<string>();
   private gitTimer?: NodeJS.Timeout;
   private checkpointTimer?: NodeJS.Timeout;
+  lastSampleAt: number | null = null;
+  watchErrors: string[] = [];
 
   constructor(private store: Store) {
     super();
   }
 
+  private started = false;
+
   start() {
+    if (this.started) return;
+    this.started = true;
     // a span left open by a crash or forced shutdown ends at the last time we saw it
     const cp = this.store.readCheckpoint<{ open: Open; lastSeen: number }>();
     if (cp?.open && cp.lastSeen > cp.open.start) {
@@ -36,17 +42,18 @@ export class Recorder extends EventEmitter {
       this.close(cp.lastSeen);
     }
     this.checkpointTimer = setInterval(() => {
-      if (this.current) this.store.writeCheckpoint({ open: this.current, lastSeen: Date.now() });
+      // the last real sample, not timer time: a dead probe must not stretch the span
+      if (this.current) this.store.writeCheckpoint({ open: this.current, lastSeen: Math.max(this.current.start, this.lastSampleAt ?? 0) });
     }, CHECKPOINT_MS);
 
-    const s = this.store.getSettings();
-    this.probe = new ActiveWindowProbe(Math.max(1, s.pollSeconds) * 1000, (sample) => this.onSample(sample));
-    this.probe.start();
+    this.syncProbe();
     powerMonitor.on('lock-screen', () => this.toIdle(Date.now()));
     powerMonitor.on('suspend', () => this.close(Date.now()));
     powerMonitor.on('shutdown', () => this.close(Date.now()));
     this.refreshWatchers();
-    for (const e of this.store.readDay(dayKey(Date.now()))) if (e.t === 'commit') this.seenCommits.add(e.hash);
+    for (const e of [...this.store.readDay(dayKey(Date.now() - 86400_000)), ...this.store.readDay(dayKey(Date.now()))]) {
+      if (e.t === 'commit') this.seenCommits.add(e.hash).add(`${e.repo}|${e.ts / 1000}|${e.subject}`);
+    }
     this.pollGit();
     this.gitTimer = setInterval(() => this.pollGit(), GIT_POLL_MS);
   }
@@ -64,13 +71,32 @@ export class Recorder extends EventEmitter {
   reconfigure(prevPoll: number) {
     const s = this.store.getSettings();
     if (s.paused) this.close(Date.now());
-    if (s.pollSeconds !== prevPoll && this.probe) {
-      this.probe.stop();
-      this.probe = new ActiveWindowProbe(Math.max(1, s.pollSeconds) * 1000, (sample) => this.onSample(sample));
-      this.probe.start();
+    if (s.pollSeconds !== prevPoll) {
+      this.probe?.stop();
+      this.probe = undefined;
     }
+    this.syncProbe();
     this.refreshWatchers();
     this.pollGit();
+  }
+
+  /** While paused nothing observes the screen at all. */
+  private syncProbe() {
+    const s = this.store.getSettings();
+    if (s.paused) {
+      this.probe?.stop();
+      return;
+    }
+    this.probe ??= new ActiveWindowProbe(Math.max(1, s.pollSeconds) * 1000, (sample) => this.onSample(sample));
+    this.probe.start();
+  }
+
+  health(): { ok: boolean; reason: string; lastSampleAt: number | null } {
+    if (this.store.getSettings().paused) return { ok: true, reason: '', lastSampleAt: this.lastSampleAt };
+    const state = this.probe?.state ?? { ok: false, reason: '起動中' };
+    if (!state.ok) return { ok: false, reason: state.reason, lastSampleAt: this.lastSampleAt };
+    const stale = !this.lastSampleAt || Date.now() - this.lastSampleAt > 60_000 + this.store.getSettings().pollSeconds * 1000;
+    return { ok: !stale, reason: stale ? '1 分以上ウィンドウ情報を取得できていません' : '', lastSampleAt: this.lastSampleAt };
   }
 
   live(): DayData['live'] {
@@ -87,6 +113,7 @@ export class Recorder extends EventEmitter {
   private onSample(sample: WindowSample | null) {
     const now = Date.now();
     const s = this.store.getSettings();
+    if (sample) this.lastSampleAt = now;
     if (s.paused) return this.close(now);
 
     const state = powerMonitor.getSystemIdleState(Math.max(1, s.idleMinutes) * 60);
@@ -95,8 +122,8 @@ export class Recorder extends EventEmitter {
     }
     if (!sample || (!sample.app && !sample.title)) return;
 
-    const hay = `${sample.app} ${sample.title}`.toLowerCase();
-    const excluded = s.excludeKeywords.some((k) => k.trim() && hay.includes(k.trim().toLowerCase()));
+    const appExcluded = s.excludeApps.some((a) => a.trim() && a.trim().toLowerCase() === sample.app.toLowerCase());
+    const excluded = appExcluded || this.isExcluded(`${sample.app} ${sample.title}`);
     const next: Open = excluded
       ? { kind: 'window', app: '(非公開)', title: '', start: now }
       : { kind: 'window', app: sample.app.slice(0, 80), title: sample.title.replace(/\s+/g, ' ').slice(0, 300), start: now };
@@ -109,7 +136,13 @@ export class Recorder extends EventEmitter {
     this.emit('changed', dayKey(now));
   }
 
+  private isExcluded(text: string) {
+    const hay = text.toLowerCase();
+    return this.store.getSettings().excludeKeywords.some((k) => k.trim() && hay.includes(k.trim().toLowerCase()));
+  }
+
   private toIdle(since: number) {
+    this.rollDay(Date.now());
     if (this.current?.kind === 'idle') return;
     const start = Math.max(since, this.current?.start ?? since);
     this.close(start);
@@ -150,10 +183,16 @@ export class Recorder extends EventEmitter {
         this.watchers.delete(dir);
       }
     }
+    this.watchErrors = [];
     for (const dir of wanted) {
-      if (this.watchers.has(dir) || !fs.existsSync(dir)) continue;
+      if (this.watchers.has(dir)) continue;
+      if (!fs.existsSync(dir)) {
+        this.watchErrors.push(dir);
+        continue;
+      }
       try {
         const w = fs.watch(dir, { recursive: true }, (_type, filename) => filename && this.onFile(dir, filename.toString()));
+        // a dropped network/USB drive errors out; pollGit() re-arms it later
         w.on('error', () => {
           w.close();
           this.watchers.delete(dir);
@@ -161,13 +200,14 @@ export class Recorder extends EventEmitter {
         this.watchers.set(dir, w);
       } catch (err) {
         console.warn('watch failed', dir, err);
+        this.watchErrors.push(dir);
       }
     }
   }
 
   private onFile(root: string, rel: string) {
     if (this.store.getSettings().paused) return;
-    if (IGNORED_DIR.test(rel) || IGNORED_FILE.test(path.basename(rel))) return;
+    if (IGNORED_DIR.test(rel) || IGNORED_FILE.test(path.basename(rel)) || this.isExcluded(rel)) return;
     const full = path.join(root, rel);
     const now = Date.now();
     if (now - (this.lastFileHit.get(full) ?? 0) < FILE_DEDUPE_MS) return;
@@ -183,17 +223,24 @@ export class Recorder extends EventEmitter {
   private pollGit() {
     const s = this.store.getSettings();
     if (s.paused) return;
-    const since = new Date(startOfDay(dayKey(Date.now()))).toISOString();
+    this.refreshWatchers();
+    // a little past midnight so commits made just before it are not missed; seenCommits dedupes
+    const since = new Date(Date.now() - 26 * 3600_000).toISOString();
+    const now = Date.now();
+    for (const [k, t] of this.lastFileHit) if (now - t > FILE_DEDUPE_MS) this.lastFileHit.delete(k);
     for (const repo of findRepos(s.watchFolders)) {
       execFile('git', ['-C', repo, 'config', 'user.email'], { timeout: 5000 }, (_e, email) => {
-        const args = ['-C', repo, 'log', '--all', `--since=${since}`, '--no-merges', '--pretty=format:%H%x1f%ct%x1f%s'];
-        if (email.trim()) args.push(`--author=${email.trim()}`);
+        // without an identity we can't tell the user's commits from teammates' fetched ones
+        if (!email.trim()) return;
+        const args = ['-c', 'core.fsmonitor=false', '-C', repo, 'log', '--all', `--since=${since}`, '--no-merges', `--author=${email.trim()}`, '--pretty=format:%H%x1f%at%x1f%s'];
         execFile('git', args, { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
           if (err) return;
           for (const line of out.split('\n')) {
             const [hash, ct, subject] = line.split('\x1f');
-            if (!hash || this.seenCommits.has(hash)) continue;
-            this.seenCommits.add(hash);
+            // rebase/amend rewrites the hash but keeps author time + subject
+            const key = `${path.basename(repo)}|${ct}|${subject}`;
+            if (!hash || this.seenCommits.has(hash) || this.seenCommits.has(key) || this.isExcluded(subject ?? '')) continue;
+            this.seenCommits.add(hash).add(key);
             this.write({ t: 'commit', ts: Number(ct) * 1000, repo: path.basename(repo), hash, subject: subject ?? '' });
           }
         });

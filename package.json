@@ -1,6 +1,6 @@
 {
   "name": "ashiato",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "PC 作業を自動記録し、Claude が作業ブロック整理・日報生成・履歴への質問応答をするデスクトップアプリ",
   "main": "dist/main.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "start": "node build.mjs && electron .",
     "dev": "node build.mjs && electron . --inspect",
     "typecheck": "tsc -p .",
-    "dist": "node build.mjs --prod && electron-builder"
+    "dist": "node build.mjs --prod && electron-builder",
+    "test": "node scripts/test.mjs"
   },
   "author": "Shinsaku Nakagawa",
   "license": "MIT",
@@ -20,6 +21,7 @@
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "marked": "^18.1.3",
+    "openai": "^7.50.0",
     "typescript": "^7.0.2",
     "zod": "^4.6.7"
   },
@@ -54,12 +56,13 @@
     "portable": {
       "artifactName": "Ashiato-${version}-portable.${ext}"
     },
-    "mac": {
-      "target": "dmg",
-      "category": "public.app-category.productivity"
-    },
-    "linux": {
-      "target": "AppImage"
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "enableCookieEncryption": true
     }
   }
 }

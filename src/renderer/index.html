@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'" />
     <title>足跡ジャーナル</title>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -13,25 +13,36 @@
         <span>足跡ジャーナル</span>
       </div>
       <nav class="datenav">
-        <button id="prevDay" class="icon" title="前の日">‹</button>
-        <input type="date" id="datePick" />
-        <button id="nextDay" class="icon" title="次の日">›</button>
+        <button id="prevDay" class="icon" title="前の日" aria-label="前の日">‹</button>
+        <input type="date" id="datePick" aria-label="日付" />
+        <button id="nextDay" class="icon" title="次の日" aria-label="次の日">›</button>
         <button id="today" class="ghost">今日</button>
       </nav>
       <form id="memoForm" class="memo">
-        <input id="memoInput" placeholder="ひとことメモ（Ctrl+Alt+J でどこからでも）" autocomplete="off" />
+        <input id="memoInput" placeholder="ひとことメモ（Ctrl+Alt+J でどこからでも）" autocomplete="off" maxlength="2000" />
       </form>
-      <button id="recToggle" class="pill"><span class="dot"></span><span id="recLabel">記録中</span></button>
-      <button id="openSettings" class="icon" title="設定">⚙</button>
+      <div class="rec">
+        <button id="recToggle" class="pill" aria-haspopup="menu"><span class="dot"></span><span id="recLabel">記録中</span></button>
+        <div id="pauseMenu" class="menu hidden" role="menu">
+          <button data-pause="30">30 分停止</button>
+          <button data-pause="60">1 時間停止</button>
+          <button data-pause="today">今日はもう記録しない</button>
+          <button data-pause="forever">再開するまで停止</button>
+        </div>
+      </div>
+      <button id="openSettings" class="icon" title="設定" aria-label="設定">⚙</button>
     </header>
+    <div id="banner" class="banner hidden" role="status"></div>
 
     <main>
       <section class="card timeline-card">
         <div class="card-head">
           <h2>タイムライン</h2>
           <div class="legend" id="legend"></div>
+          <button id="deleteDay" class="ghost small danger" title="この日の記録をすべて削除">この日を削除</button>
         </div>
         <div id="timeline" class="timeline"></div>
+        <p class="hint muted small">ホバーで詳細、右クリックでその記録を削除できます。</p>
         <div id="empty" class="empty hidden">
           <p>この日の記録はまだありません。</p>
           <p class="muted">記録はバックグラウンドで自動的に進みます。⚙ から作業フォルダを登録すると、ファイル編集と git コミットも記録されます。</p>
@@ -55,11 +66,12 @@
 
         <section class="card ai">
           <div class="tabs" role="tablist">
-            <button class="tab active" data-tab="blocks">作業ブロック</button>
-            <button class="tab" data-tab="report">日報</button>
-            <button class="tab" data-tab="ask">足跡に聞く</button>
+            <button class="tab active" data-tab="blocks" role="tab">作業ブロック</button>
+            <button class="tab" data-tab="report" role="tab">日報</button>
+            <button class="tab" data-tab="ask" role="tab">足跡に聞く</button>
             <span class="spacer"></span>
-            <button id="previewBtn" class="ghost small" title="Claude に送るデータを確認">送信内容を確認</button>
+            <span id="destLabel" class="dest small" title="AI 機能の送信先"></span>
+            <button id="previewBtn" class="ghost small" title="AI に送るデータを確認">送信内容を確認</button>
           </div>
 
           <div class="pane" data-pane="blocks">
@@ -73,25 +85,36 @@
           <div class="pane hidden" data-pane="report">
             <div class="pane-actions">
               <button id="reportBtn" class="primary">✦ 日報を生成</button>
+              <button id="cancelReport" class="ghost hidden">中止</button>
+              <button id="editReport" class="ghost">編集</button>
               <button id="copyReport" class="ghost">Markdown をコピー</button>
+              <button id="copyPlain" class="ghost">テキストでコピー</button>
               <span id="reportStatus" class="muted"></span>
             </div>
-            <details id="thinkingBox" class="thinking hidden"><summary>Claude の思考の要約</summary><div id="thinkingText"></div></details>
+            <details id="thinkingBox" class="thinking hidden"><summary>AI の思考の要約</summary><div id="thinkingText"></div></details>
             <article id="reportBody" class="md"></article>
+            <div id="reportEditor" class="editor hidden">
+              <textarea id="reportText" spellcheck="false"></textarea>
+              <div class="row end">
+                <button id="cancelEdit" class="ghost">キャンセル</button>
+                <button id="saveReport" class="primary">保存</button>
+              </div>
+            </div>
           </div>
 
           <div class="pane hidden" data-pane="ask">
             <div id="chatLog" class="chat">
               <div class="suggest">
-                <p class="muted">記録をもとに Claude が答えます。例えば：</p>
+                <p class="muted">記録をもとに AI が答えます。必要に応じて他の日の記録も検索します。例えば：</p>
                 <button class="chip">今日いちばん時間を使った作業は？</button>
                 <button class="chip">昨日の午後は何をしていた？</button>
                 <button class="chip">今週やったことを箇条書きでまとめて</button>
               </div>
             </div>
             <form id="askForm" class="askbar">
-              <textarea id="askInput" rows="1" placeholder="足跡に質問する（Enter で送信、Shift+Enter で改行）"></textarea>
+              <textarea id="askInput" rows="1" maxlength="4000" placeholder="足跡に質問する（Enter で送信、Shift+Enter で改行）"></textarea>
               <button class="primary" id="askBtn">送信</button>
+              <button type="button" class="ghost hidden" id="cancelAsk">中止</button>
               <button type="button" class="ghost" id="newChat" title="会話をリセット">新しい会話</button>
             </form>
           </div>
@@ -101,46 +124,113 @@
 
     <div id="tooltip" class="tooltip hidden"></div>
 
-    <dialog id="settingsDlg">
-      <form method="dialog" class="settings">
-        <h2>設定</h2>
-        <label>Claude API キー
-          <div class="row">
-            <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
-            <button type="button" id="saveKey" class="ghost">保存</button>
-            <button type="button" id="clearKey" class="ghost">削除</button>
-          </div>
-          <small id="keyState" class="muted"></small>
-        </label>
-        <label>モデル <select id="model"></select></label>
-        <label>記録するフォルダ（ファイル編集・git コミット）
-          <ul id="folderList" class="folders"></ul>
-          <button type="button" id="addFolder" class="ghost">フォルダを追加…</button>
-        </label>
-        <label>除外キーワード（ウィンドウタイトル・アプリ名に含まれると内容を記録しません。1 行に 1 つ）
-          <textarea id="exclude" rows="4"></textarea>
-        </label>
-        <div class="row">
-          <label>離席とみなす無操作時間（分） <input type="number" id="idleMin" min="1" max="60" /></label>
-          <label>サンプリング間隔（秒） <input type="number" id="poll" min="1" max="60" /></label>
+    <dialog id="onboardDlg">
+      <div class="settings onboard">
+        <h2>ようこそ、足跡ジャーナルへ</h2>
+        <p>このアプリは PC での作業を自動で記録し、AI が「作業の整理」「日報の下書き」「過去の作業への質問応答」をします。始める前に、何が記録されどこへ送られるかを確認してください。</p>
+        <div class="facts">
+          <div><b>記録するもの</b><span>前面ウィンドウのアプリ名とタイトル（メールの件名・チャット名・URL を含むことがあります）、離席時間、登録フォルダ内のファイル名、あなたの git コミット、メモ。画面の内容やキー入力は記録しません。</span></div>
+          <div><b>保存場所</b><span>この PC の中だけ（<code>%LOCALAPPDATA%\Ashiato</code>）。いつでも日ごと・記録ごとに削除できます。</span></div>
+          <div><b>送信されるもの</b><span>AI ボタンを押したときだけ、要約したタイムラインを選んだ AI に送ります。「足跡に聞く」では、質問に答えるため他の日の記録も検索して送ります。送信内容は「送信内容を確認」で見られます。</span></div>
+          <div><b>送らないために</b><span>除外キーワード・除外アプリに当てはまるウィンドウはタイトルを記録しません。メールアドレスや URL のパスなどは送信前に自動でマスクします。社外に出したくない場合はローカル LLM を選べます。</span></div>
         </div>
-        <label>日報テンプレート <textarea id="template" rows="5"></textarea></label>
-        <label class="check"><input type="checkbox" id="openAtLogin" /> ログイン時に自動起動（パッケージ版のみ）</label>
-        <p class="muted small">記録データはこの PC にだけ保存されます。Claude に送られるのは、AI ボタンを押したときの要約済みタイムラインだけです。 <a href="#" id="openData">データフォルダを開く</a></p>
+        <label>使う AI
+          <select id="obProvider">
+            <option value="claude">Claude API（Anthropic・クラウド）</option>
+            <option value="local">ローカル LLM（Ollama / LM Studio など・社内や PC 内）</option>
+          </select>
+        </label>
         <div class="row end">
-          <button value="cancel" class="ghost">閉じる</button>
-          <button id="saveSettings" value="default" class="primary">保存</button>
+          <button id="obLater" class="ghost">あとで設定する</button>
+          <button id="obStart" class="primary">同意して記録を開始</button>
         </div>
-      </form>
+      </div>
+    </dialog>
+
+    <dialog id="settingsDlg">
+      <div class="settings">
+        <h2>設定</h2>
+
+        <fieldset>
+          <legend>AI</legend>
+          <div class="seg" role="radiogroup">
+            <label><input type="radio" name="provider" value="claude" /> Claude API</label>
+            <label><input type="radio" name="provider" value="local" /> ローカル LLM</label>
+          </div>
+          <div id="claudeBox">
+            <label>Claude API キー
+              <div class="row">
+                <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
+                <button type="button" id="saveKey" class="ghost">保存</button>
+                <button type="button" id="clearKey" class="ghost">削除</button>
+              </div>
+              <small id="keyState" class="muted"></small>
+            </label>
+            <label>モデル <select id="model"></select></label>
+          </div>
+          <div id="localBox">
+            <label>サーバー URL（OpenAI 互換 API）
+              <div class="row">
+                <input id="localUrl" placeholder="http://localhost:11434/v1" />
+                <button type="button" id="testLocal" class="ghost">接続テスト</button>
+              </div>
+              <small class="muted">Ollama: http://localhost:11434/v1 ／ LM Studio: http://localhost:1234/v1 ／ vLLM などの社内サーバーも可</small>
+              <small id="localState" class="muted"></small>
+            </label>
+            <label>モデル <input id="localModel" list="localModels" placeholder="例: qwen3:14b" /><datalist id="localModels"></datalist></label>
+            <small class="muted">ツール呼び出しと JSON 出力に対応したモデル（Qwen3、Llama 3.1 以降、gpt-oss など）を推奨します。Ollama ではコンテキスト長を 32K 以上にしてください（OLLAMA_CONTEXT_LENGTH）。</small>
+            <label>API キー（サーバーが必要とする場合のみ）
+              <div class="row">
+                <input type="password" id="localKey" autocomplete="off" />
+                <button type="button" id="saveLocalKey" class="ghost">保存</button>
+                <button type="button" id="clearLocalKey" class="ghost">削除</button>
+              </div>
+            </label>
+          </div>
+          <label class="check"><input type="checkbox" id="redact" /> 送信前にメールアドレス・URL のパス・トークン・長い番号をマスクする</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>記録</legend>
+          <label>記録するフォルダ（ファイル編集・git コミット）
+            <ul id="folderList" class="folders"></ul>
+            <button type="button" id="addFolder" class="ghost">フォルダを追加…</button>
+          </label>
+          <label>除外キーワード（ウィンドウタイトル・ファイルパス・コミットに含まれると内容を記録しません。1 行に 1 つ）
+            <textarea id="exclude" rows="4"></textarea>
+          </label>
+          <label>除外アプリ（プロセス名。例: Teams、OUTLOOK。1 行に 1 つ）
+            <textarea id="excludeApps" rows="2"></textarea>
+          </label>
+          <div class="row">
+            <label>離席とみなす無操作時間（分） <input type="number" id="idleMin" min="1" max="120" /></label>
+            <label>サンプリング間隔（秒） <input type="number" id="poll" min="1" max="60" /></label>
+            <label>保存期間（日・0 で無期限） <input type="number" id="retention" min="0" max="3650" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>日報</legend>
+          <label>テンプレート <textarea id="template" rows="5"></textarea></label>
+        </fieldset>
+
+        <label class="check"><input type="checkbox" id="openAtLogin" /> ログイン時に自動起動（インストール版・ポータブル版）</label>
+        <p class="muted small">記録データはこの PC にだけ保存されます。AI に送られるのは AI 機能を使ったときの要約済みタイムラインと、「足跡に聞く」で AI が検索・参照した記録です。 <a href="#" id="openData">データフォルダを開く</a></p>
+        <div class="row end">
+          <span id="settingsMsg" class="muted small"></span>
+          <button type="button" id="closeSettings" class="ghost">閉じる</button>
+          <button type="button" id="saveSettings" class="primary">保存</button>
+        </div>
+      </div>
     </dialog>
 
     <dialog id="previewDlg">
-      <form method="dialog" class="preview">
-        <h2>Claude に送るタイムライン</h2>
-        <p class="muted small">AI 機能を使うと、この要約テキスト（とテンプレート・作業ブロック）だけが Anthropic API に送られます。</p>
+      <div class="preview">
+        <h2>AI に送るタイムライン</h2>
+        <p class="muted small"><span id="previewDest"></span><br /><span id="previewSize"></span> 実際にはこれにテンプレートや作業ブロックが加わります。「足跡に聞く」では AI が必要な日の記録を追加で検索します。</p>
         <pre id="previewText"></pre>
-        <div class="row end"><button class="primary">閉じる</button></div>
-      </form>
+        <div class="row end"><button id="closePreview" class="primary">閉じる</button></div>
+      </div>
     </dialog>
 
     <script src="app.js"></script>

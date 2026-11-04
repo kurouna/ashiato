@@ -1,16 +1,22 @@
-import { BrowserWindow, Menu, Tray, app, dialog, globalShortcut, ipcMain, nativeImage, shell } from 'electron';
+import { BrowserWindow, Menu, Notification, Tray, app, clipboard, dialog, globalShortcut, ipcMain, nativeImage, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Settings, StreamEvent, dayKey } from '../shared/types';
-import { Ai, describeError } from './ai';
+import { pathToFileURL } from 'node:url';
+import * as z from 'zod';
+import { Settings, Status, StreamEvent, dayKey } from '../shared/types';
+import { Ai, LocalProvider } from './ai';
 import { Recorder } from './recorder';
-import { Store } from './store';
+import { AiPatch, Store, assertDate } from './store';
 
 const MEMO_SHORTCUT = 'CommandOrControl+Alt+J';
 
-// separate profile for development / trying things out without touching the real journal
-if (process.env.ASHIATO_USER_DATA) app.setPath('userData', path.resolve(process.env.ASHIATO_USER_DATA));
-if (!app.requestSingleInstanceLock()) app.quit();
+// Keep the journal out of Roaming AppData so it never travels with roaming profiles / profile backups.
+if (process.platform === 'win32' && process.env.LOCALAPPDATA) app.setPath('userData', path.join(process.env.LOCALAPPDATA, 'Ashiato'));
+// separate profile for development / demos; never honoured by packaged builds
+if (!app.isPackaged && process.env.ASHIATO_USER_DATA) app.setPath('userData', path.resolve(process.env.ASHIATO_USER_DATA));
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.exit(0);
 
 let store: Store;
 let recorder: Recorder;
@@ -19,9 +25,12 @@ let mainWin: BrowserWindow | null = null;
 let memoWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+let shortcutOk = true;
 
 const rendererDir = path.join(__dirname, 'renderer');
+const rendererUrl = pathToFileURL(rendererDir).href + '/';
 const preload = path.join(__dirname, 'preload.js');
+const webPreferences = { preload, contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, spellcheck: false };
 
 function createMainWindow() {
   mainWin = new BrowserWindow({
@@ -30,16 +39,15 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 600,
     title: '足跡ジャーナル',
-    icon: makeIcon(64),
-    backgroundColor: '#0f1115',
+    icon: makeIcon(64, false),
     autoHideMenuBar: true,
     show: false,
-    webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences,
   });
   mainWin.loadFile(path.join(rendererDir, 'index.html'));
   mainWin.once('ready-to-show', () => {
     if (!process.argv.includes('--hidden')) mainWin?.show();
-    const shot = process.env.ASHIATO_SNAPSHOT;
+    const shot = !app.isPackaged && process.env.ASHIATO_SNAPSHOT;
     if (shot) {
       setTimeout(async () => {
         const img = await mainWin!.webContents.capturePage();
@@ -48,19 +56,24 @@ function createMainWindow() {
     }
   });
   mainWin.on('close', (e) => {
-    if (!quitting) {
-      e.preventDefault();
-      mainWin?.hide();
-    }
-  });
-  mainWin.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
+    if (quitting) return;
+    e.preventDefault();
+    mainWin?.hide();
+    noticeTrayOnce();
   });
 }
 
+function noticeTrayOnce() {
+  const marker = path.join(app.getPath('userData'), '.tray-notice-shown');
+  if (fs.existsSync(marker)) return;
+  fs.writeFileSync(marker, '');
+  const body = '記録はタスクトレイで続いています。終了するときはトレイアイコンを右クリックしてください。';
+  if (process.platform === 'win32' && tray) tray.displayBalloon({ title: '足跡ジャーナル', content: body, iconType: 'info' });
+  else if (Notification.isSupported()) new Notification({ title: '足跡ジャーナル', body }).show();
+}
+
 function showMain() {
-  if (!mainWin) createMainWindow();
+  if (!mainWin || mainWin.isDestroyed()) createMainWindow();
   mainWin!.show();
   mainWin!.focus();
 }
@@ -83,7 +96,7 @@ function toggleMemo() {
     skipTaskbar: true,
     transparent: true,
     show: false,
-    webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences,
   });
   memoWin.loadFile(path.join(rendererDir, 'memo.html'));
   memoWin.once('ready-to-show', () => {
@@ -93,16 +106,35 @@ function toggleMemo() {
   memoWin.on('blur', () => memoWin?.hide());
 }
 
+// ---------- pause ----------
+function pause(minutes: number | 'today' | null) {
+  if (minutes === null) return applySettings({ paused: false, pausedUntil: null });
+  const until = minutes === 'today' ? new Date(new Date().setHours(24, 0, 0, 0)).getTime() : Date.now() + minutes * 60_000;
+  return applySettings({ paused: true, pausedUntil: until });
+}
+
 function refreshTray() {
   if (!tray) return;
-  const paused = store.getSettings().paused;
-  tray.setToolTip(paused ? '足跡ジャーナル（一時停止中）' : '足跡ジャーナル（記録中）');
+  const s = store.getSettings();
+  const until = s.paused && s.pausedUntil ? `（${new Date(s.pausedUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} まで）` : '';
+  tray.setImage(makeIcon(process.platform === 'darwin' ? 18 : 16, s.paused));
+  tray.setToolTip(s.paused ? `足跡ジャーナル — 一時停止中${until}` : '足跡ジャーナル — 記録中');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '開く', click: showMain },
       { label: `クイックメモ (${MEMO_SHORTCUT.replace('CommandOrControl', 'Ctrl')})`, click: toggleMemo },
       { type: 'separator' },
-      { label: paused ? '記録を再開' : '記録を一時停止', click: () => applySettings({ paused: !paused }) },
+      s.paused
+        ? { label: `記録を再開${until}`, click: () => pause(null) }
+        : {
+            label: '記録を一時停止',
+            submenu: [
+              { label: '30 分', click: () => pause(30) },
+              { label: '1 時間', click: () => pause(60) },
+              { label: '今日はもう記録しない', click: () => pause('today') },
+              { label: '再開するまで', click: () => applySettings({ paused: true, pausedUntil: null }) },
+            ],
+          },
       { type: 'separator' },
       { label: '終了', click: () => app.quit() },
     ]),
@@ -111,14 +143,23 @@ function refreshTray() {
 
 function applySettings(patch: Partial<Settings>) {
   const prev = store.getSettings();
+  if (patch.paused === false) patch.pausedUntil = null;
   const next = store.updateSettings(patch);
   if (patch.openAtLogin !== undefined && app.isPackaged) {
-    app.setLoginItemSettings({ openAtLogin: next.openAtLogin, args: ['--hidden'] });
+    // the portable build runs from a temp folder; register the real exe instead
+    const exe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+    app.setLoginItemSettings({ openAtLogin: next.openAtLogin, path: exe, args: ['--hidden'] });
   }
+  if (patch.retentionDays !== undefined) store.purgeExpired();
   recorder.reconfigure(prev.pollSeconds);
   refreshTray();
   broadcast('settings:changed', store.getPublicSettings());
   return store.getPublicSettings();
+}
+
+function status(): Status {
+  const h = recorder.health();
+  return { recording: !store.getSettings().paused, probeOk: h.ok, probeReason: h.reason, lastSampleAt: h.lastSampleAt, shortcutOk, destination: ai.destination(), watchErrors: recorder.watchErrors };
 }
 
 function broadcast(channel: string, payload: unknown) {
@@ -131,66 +172,95 @@ function streamTo(sender: Electron.WebContents, reqId: string) {
   };
 }
 
+// ---------- IPC ----------
+/** Every handler only answers our own pages, never a frame that navigated elsewhere. */
+function handle(channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown) {
+  ipcMain.handle(channel, async (e, ...args) => {
+    if (!e.senderFrame?.url.startsWith(rendererUrl)) throw new Error('forbidden');
+    try {
+      return await fn(e, ...args);
+    } catch (err) {
+      // show the first validation message, not zod's JSON dump
+      if (err instanceof z.ZodError) throw new Error(err.issues[0]?.message ?? '入力が不正です');
+      throw err;
+    }
+  });
+}
+
+const reqIdOf = (v: unknown) => z.string().max(64).parse(v);
+
+async function aiCall<T>(fn: () => Promise<T>): Promise<({ ok: true } & T) | { ok: false; error: string }> {
+  try {
+    return { ok: true, ...(await fn()) };
+  } catch (err) {
+    return { ok: false, error: ai.describeError(err) };
+  }
+}
+
 function registerIpc() {
-  ipcMain.handle('day:get', (_e, date: string) => ({
-    date,
-    events: store.readDay(date),
-    ai: store.readAi(date),
-    live: date === dayKey(Date.now()) ? recorder.live() : null,
-  }));
-  ipcMain.handle('days:list', () => store.summarizeDays());
-  ipcMain.handle('settings:get', () => store.getPublicSettings());
-  ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => applySettings(patch));
-  ipcMain.handle('settings:setApiKey', (_e, key: string | null) => {
-    store.setApiKey(key);
+  handle('day:get', (_e, date) => {
+    const d = assertDate(date);
+    return { date: d, events: store.readDay(d), ai: store.readAi(d), live: d === dayKey(Date.now()) ? recorder.live() : null };
+  });
+  handle('days:list', () => store.summarizeDays());
+  handle('status:get', () => status());
+  handle('settings:get', () => store.getPublicSettings());
+  handle('settings:set', (_e, patch) => applySettings(patch));
+  handle('settings:setSecret', async (_e, name, key) => {
+    await store.setSecret(z.enum(['claude', 'local']).parse(name), key === null ? null : z.string().max(500).parse(key));
     broadcast('settings:changed', store.getPublicSettings());
     return store.getPublicSettings();
   });
-  ipcMain.handle('settings:pickFolder', async () => {
+  handle('settings:pickFolder', async () => {
     const res = await dialog.showOpenDialog(mainWin!, { properties: ['openDirectory', 'multiSelections'], title: '記録するフォルダを選択' });
     if (res.canceled) return store.getPublicSettings();
+    const tooBroad = res.filePaths.filter((p) => path.parse(p).root === p || p === app.getPath('home'));
+    if (tooBroad.length) {
+      await dialog.showMessageBox(mainWin!, { type: 'warning', message: 'ドライブ直下やホームフォルダ全体は登録できません。作業フォルダを選んでください。' });
+      return store.getPublicSettings();
+    }
     const folders = [...new Set([...store.getSettings().watchFolders, ...res.filePaths])];
     return applySettings({ watchFolders: folders });
   });
-  ipcMain.handle('memo:add', (_e, text: string) => recorder.addMemo(text));
-  ipcMain.handle('memo:hide', () => memoWin?.hide());
-  ipcMain.handle('data:open', () => shell.openPath(store.dir));
+  handle('pause', (_e, minutes) => pause(z.union([z.number().int().min(1).max(1440), z.literal('today'), z.null()]).parse(minutes)));
+  handle('memo:add', (_e, text) => recorder.addMemo(z.string().max(2000).parse(text)));
+  handle('memo:hide', () => memoWin?.hide());
+  handle('data:open', () => shell.openPath(store.dir));
+  handle('day:delete', async (_e, date) => {
+    const d = assertDate(date);
+    const { response } = await dialog.showMessageBox(mainWin!, { type: 'warning', buttons: ['削除', 'キャンセル'], defaultId: 1, cancelId: 1, message: `${d} の記録と AI の結果をすべて削除します。元に戻せません。` });
+    if (response !== 0) return false;
+    store.deleteDay(d);
+    broadcast('journal:changed', d);
+    return true;
+  });
+  handle('event:delete', (_e, date, ev) => {
+    const d = assertDate(date);
+    store.deleteEvent(d, ev);
+    broadcast('journal:changed', d);
+  });
+  handle('link:open', async (_e, url) => {
+    const u = new URL(z.string().max(2000).parse(url));
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return;
+    const { response } = await dialog.showMessageBox(mainWin!, { type: 'question', buttons: ['開く', 'キャンセル'], defaultId: 1, cancelId: 1, message: '外部サイトをブラウザで開きますか？', detail: `${u.host}\n\n${u.href}` });
+    if (response === 0) shell.openExternal(u.href);
+  });
+  handle('clipboard:write', (_e, text) => clipboard.writeText(z.string().max(200_000).parse(text)));
 
-  ipcMain.handle('ai:preview', (_e, date: string) => ai.preview(date));
-  ipcMain.handle('ai:segment', async (_e, date: string) => {
-    try {
-      return { ok: true, ai: await ai.segment(date) };
-    } catch (err) {
-      return { ok: false, error: describeError(err) };
-    }
-  });
-  ipcMain.handle('ai:report', async (e, date: string, reqId: string) => {
-    const emit = streamTo(e.sender, reqId);
-    try {
-      const res = await ai.report(date, emit);
-      emit('done', res.report ?? '');
-      return { ok: true, ai: res };
-    } catch (err) {
-      emit('error', describeError(err));
-      return { ok: false, error: describeError(err) };
-    }
-  });
-  ipcMain.handle('ai:ask', async (e, question: string, reqId: string) => {
-    const emit = streamTo(e.sender, reqId);
-    try {
-      const answer = await ai.ask(question, emit);
-      emit('done', answer);
-      return { ok: true, answer };
-    } catch (err) {
-      emit('error', describeError(err));
-      return { ok: false, error: describeError(err) };
-    }
-  });
-  ipcMain.handle('ai:resetChat', () => ai.resetChat());
+  handle('ai:preview', (_e, date) => ({ text: ai.preview(assertDate(date)), destination: ai.destination() }));
+  handle('ai:cancel', (_e, reqId) => ai.cancel(reqIdOf(reqId)));
+  handle('ai:save', (_e, date, patch) => store.writeAi(assertDate(date), AiPatch.parse(patch)));
+  handle('ai:segment', (_e, date) => aiCall(async () => ({ ai: await ai.segment(assertDate(date)) })));
+  handle('ai:report', (e, date, reqId) => aiCall(async () => ({ ai: await ai.report(assertDate(date), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId))) })));
+  handle('ai:ask', (e, question, reqId) => aiCall(async () => ({ answer: await ai.ask(z.string().min(1).max(4000).parse(question), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId))) })));
+  handle('ai:resetChat', () => ai.resetChat());
+  handle('local:models', (_e, baseUrl) =>
+    aiCall(async () => ({ models: await LocalProvider.listModels(z.string().max(500).regex(/^https?:\/\/\S+$/i,'http(s) の URL を指定してください').parse(baseUrl), await store.getSecret('local')) })),
+  );
 }
 
-/** A small footprint glyph drawn into a BGRA bitmap, so the app ships without image assets. */
-function makeIcon(size: number) {
+/** A small footprint glyph drawn into a BGRA bitmap, so the app ships without image assets. Grey while paused. */
+function makeIcon(size: number, paused: boolean) {
   const buf = Buffer.alloc(size * size * 4);
   const dots: [number, number, number][] = [
     [0.5, 0.62, 0.26], // sole
@@ -199,60 +269,95 @@ function makeIcon(size: number) {
     [0.6, 0.22, 0.09],
     [0.74, 0.3, 0.09],
   ];
+  const [r, g, b] = paused ? [0x8b, 0x92, 0xa3] : [0xf5, 0xc9, 0x7a];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = (x + 0.5) / size;
       const v = (y + 0.5) / size;
       let a = 0;
-      for (const [cx, cy, r] of dots) {
-        const ry = cx === 0.5 && cy === 0.62 ? r * 1.25 : r;
-        const d = Math.hypot((u - cx) / r, (v - cy) / ry);
-        a = Math.max(a, Math.min(1, Math.max(0, (1 - d) * size * r * 0.9)));
+      for (const [cx, cy, rad] of dots) {
+        const ry = cx === 0.5 && cy === 0.62 ? rad * 1.25 : rad;
+        const d = Math.hypot((u - cx) / rad, (v - cy) / ry);
+        a = Math.max(a, Math.min(1, Math.max(0, (1 - d) * size * rad * 0.9)));
       }
       const i = (y * size + x) * 4;
-      buf[i] = 0x7a; // B
-      buf[i + 1] = 0xc9; // G
-      buf[i + 2] = 0xf5; // R
+      buf[i] = b;
+      buf[i + 1] = g;
+      buf[i + 2] = r;
       buf[i + 3] = Math.round(a * 255);
     }
   }
   return nativeImage.createFromBitmap(buf, { width: size, height: size });
 }
 
-app.on('second-instance', showMain);
-app.on('before-quit', () => {
-  quitting = true;
-  recorder?.stop();
-});
-app.on('will-quit', () => globalShortcut.unregisterAll());
-for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => app.quit());
-app.on('window-all-closed', () => {
-  // stay resident in the tray
-});
-
-app.whenReady().then(() => {
-  if (process.platform === 'win32') app.setAppUserModelId('dev.ashiato.journal');
-  store = new Store();
-  recorder = new Recorder(store);
-  ai = new Ai(store, recorder);
-  registerIpc();
-
-  let pending: NodeJS.Timeout | undefined;
-  const dates = new Set<string>();
-  recorder.on('changed', (date: string) => {
-    dates.add(date);
-    pending ??= setTimeout(() => {
-      for (const d of dates) broadcast('journal:changed', d);
-      dates.clear();
-      pending = undefined;
-    }, 1500);
+if (gotLock) {
+  // No page of ours ever needs to leave file:// or open windows; links go through link:open.
+  app.on('web-contents-created', (_e, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.on('will-navigate', (e, url) => {
+      if (!url.startsWith(rendererUrl)) e.preventDefault();
+    });
+    contents.on('will-frame-navigate', (e) => {
+      if (!e.url.startsWith(rendererUrl)) e.preventDefault();
+    });
+    contents.on('will-attach-webview', (e) => e.preventDefault());
   });
-  recorder.start();
 
-  tray = new Tray(makeIcon(process.platform === 'darwin' ? 18 : 16));
-  tray.on('click', showMain);
-  refreshTray();
+  app.on('second-instance', showMain);
+  app.on('before-quit', () => {
+    quitting = true;
+    recorder?.stop();
+  });
+  app.on('will-quit', () => globalShortcut.unregisterAll());
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => app.quit());
+  app.on('window-all-closed', () => {
+    // stay resident in the tray
+  });
 
-  if (!globalShortcut.register(MEMO_SHORTCUT, toggleMemo)) console.warn('shortcut already taken:', MEMO_SHORTCUT);
-  createMainWindow();
-});
+  app.whenReady().then(async () => {
+    if (process.platform === 'win32') app.setAppUserModelId('dev.ashiato.journal');
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write'));
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
+
+    store = new Store();
+    await store.init();
+    store.purgeExpired();
+    recorder = new Recorder(store);
+    ai = new Ai(store, recorder);
+    registerIpc();
+
+    let pending: NodeJS.Timeout | undefined;
+    const dates = new Set<string>();
+    recorder.on('changed', (date: string) => {
+      dates.add(date);
+      pending ??= setTimeout(() => {
+        for (const d of dates) broadcast('journal:changed', d);
+        dates.clear();
+        pending = undefined;
+      }, 1500);
+    });
+    if (store.getSettings().onboarded) recorder.start();
+
+    tray = new Tray(makeIcon(process.platform === 'darwin' ? 18 : 16, store.getSettings().paused));
+    tray.on('click', showMain);
+    refreshTray();
+
+    // housekeeping: timed pauses, retention, status for the header
+    setInterval(() => {
+      const s = store.getSettings();
+      if (s.paused && s.pausedUntil && Date.now() >= s.pausedUntil) pause(null);
+      broadcast('status:changed', status());
+    }, 15_000);
+    setInterval(() => store.purgeExpired(), 6 * 3600_000);
+
+    shortcutOk = globalShortcut.register(MEMO_SHORTCUT, toggleMemo);
+    createMainWindow();
+  });
+
+  // onboarding finished from the renderer: start recording for the first time
+  ipcMain.on('onboarded', (e) => {
+    if (!e.senderFrame?.url.startsWith(rendererUrl)) return;
+    applySettings({ onboarded: true });
+    recorder.start();
+  });
+}
