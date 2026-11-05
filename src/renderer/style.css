@@ -246,3 +246,5 @@ code { background: var(--card2); border-radius: 4px; padding: 0 4px; font-size: 
 .tl-detail-actions { display: flex; gap: 4px; align-items: center; flex: none; }
 .tl-tick.edge-l span { transform: none; }
 .tl-tick.edge-r span { transform: translateX(-100%); }
+.brand .version { font-weight: 500; font-size: 11px; color: var(--muted); letter-spacing: 0; }
+#settingsVersion { margin-right: auto; }

@@ -11,6 +11,7 @@
       <div class="brand">
         <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><ellipse cx="12" cy="15" rx="5.2" ry="6.4" /><circle cx="7" cy="6.8" r="1.9" /><circle cx="10.6" cy="4.8" r="1.9" /><circle cx="14.3" cy="4.8" r="1.9" /><circle cx="17.6" cy="6.8" r="1.9" /></svg>
         <span>足跡ジャーナル</span>
+        <span id="appVersion" class="version" title="バージョン"></span>
       </div>
       <nav class="datenav">
         <button id="prevDay" class="icon" title="前の日" aria-label="前の日">‹</button>
@@ -219,6 +220,7 @@
         <label class="check"><input type="checkbox" id="openAtLogin" /> ログイン時に自動起動（インストール版・ポータブル版）</label>
         <p class="muted small">記録データはこの PC にだけ保存されます。AI に送られるのは AI 機能を使ったときの要約済みタイムラインと、「足跡に聞く」で AI が検索・参照した記録です。 <a href="#" id="openData">データフォルダを開く</a></p>
         <div class="row end">
+          <span id="settingsVersion" class="muted small"></span>
           <span id="settingsMsg" class="muted small"></span>
           <button type="button" id="closeSettings" class="ghost">閉じる</button>
           <button type="button" id="saveSettings" class="primary">保存</button>

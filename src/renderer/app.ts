@@ -371,6 +371,10 @@ $('memoForm').addEventListener('submit', async (e) => {
 
 // ---------- recording state & pause ----------
 function renderRec() {
+  if (status?.version) {
+    $('appVersion').textContent = `v${status.version}`;
+    $('settingsVersion').textContent = `足跡ジャーナル v${status.version}`;
+  }
   const paused = settings.paused;
   const until = paused && settings.pausedUntil ? `（${new Date(settings.pausedUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}まで）` : '';
   const broken = settings.onboarded && !paused && status && !status.probeOk;

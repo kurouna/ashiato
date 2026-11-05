@@ -74,6 +74,7 @@ export interface PublicSettings extends Settings {
 }
 
 export interface Status {
+  version: string;
   recording: boolean;
   probeOk: boolean;
   probeReason: string;

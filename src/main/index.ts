@@ -118,7 +118,7 @@ function refreshTray() {
   const s = store.getSettings();
   const until = s.paused && s.pausedUntil ? `（${new Date(s.pausedUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} まで）` : '';
   tray.setImage(trayIcon(s.paused));
-  tray.setToolTip(s.paused ? `足跡ジャーナル — 一時停止中${until}` : '足跡ジャーナル — 記録中');
+  tray.setToolTip(`足跡ジャーナル v${app.getVersion()} — ${s.paused ? `一時停止中${until}` : '記録中'}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '開く', click: showMain },
@@ -159,7 +159,7 @@ function applySettings(patch: Partial<Settings>) {
 
 function status(): Status {
   const h = recorder.health();
-  return { recording: !store.getSettings().paused, probeOk: h.ok, probeReason: h.reason, lastSampleAt: h.lastSampleAt, shortcutOk, destination: ai.destination(), watchErrors: recorder.watchErrors };
+  return { version: app.getVersion(), recording: !store.getSettings().paused, probeOk: h.ok, probeReason: h.reason, lastSampleAt: h.lastSampleAt, shortcutOk, destination: ai.destination(), watchErrors: recorder.watchErrors };
 }
 
 function broadcast(channel: string, payload: unknown) {
