@@ -48,7 +48,6 @@ export const MARKS: Record<string, { label: string; svg: string }> = {
   commit: { label: 'コミット', svg: '<svg viewBox="0 0 16 16"><path d="M0 8h4.5M11.5 8H16" class="ln"/><circle cx="8" cy="8" r="3.6" class="fill"/></svg>' },
   merge: { label: 'マージ', svg: '<svg viewBox="0 0 16 16"><path d="M4 2v12M4 5c0 4 8 3 8 7" class="ln"/><circle cx="4" cy="3" r="2.2" class="fill"/><circle cx="12" cy="12.5" r="2.2" class="fill"/></svg>' },
   pull: { label: 'プル', svg: '<svg viewBox="0 0 16 16"><path d="M8 1.5v9M4.5 7 8 10.5 11.5 7M2.5 14h11" class="ln"/></svg>' },
-  push: { label: 'プッシュ', svg: '<svg viewBox="0 0 16 16"><path d="M8 14.5v-9M4.5 9 8 5.5 11.5 9M2.5 2h11" class="ln"/></svg>' },
   rebase: { label: 'リベース', svg: '<svg viewBox="0 0 16 16"><path d="M13 6a5 5 0 0 0-9-2M3 10a5 5 0 0 0 9 2" class="ln"/><path d="M4 1.5V4.5H7M12 14.5V11.5H9" class="ln"/></svg>' },
   memo: { label: 'メモ', svg: '<svg viewBox="0 0 16 16"><path d="M2.5 2.5h11v8h-6l-3.5 3v-3h-1.5z" class="fill"/></svg>' },
 };
@@ -108,7 +107,7 @@ export class Timeline {
           <button type="button" class="ghost small" data-z="3h">3 時間</button>
         </div>
         <span class="tl-range muted small"></span>
-        <span class="muted small tl-hint">Ctrl + ホイールで拡大・縮小、ドラッグで移動、クリックで詳細</span>
+        <span class="muted small tl-hint">Shift（または Ctrl）+ ホイールで拡大・縮小、ドラッグで移動、クリックで詳細</span>
       </div>
       <div class="tl-body">
         <div class="tl-labels"></div>
@@ -172,8 +171,7 @@ export class Timeline {
         items.push({ lane: 'git', start: e.ts, end: e.ts, mark: 'commit', tip: `${hhmm(e.ts)} コミット「${e.repo}」\n${e.subject}`, event });
       } else if (e.t === 'gitop') {
         const mark = MARKS[e.action] ? e.action : 'merge';
-        const note = e.action === 'push' ? '' : '（取り込み）';
-        items.push({ lane: 'git', start: e.ts, end: e.ts, mark, tip: `${hhmm(e.ts)} ${MARKS[mark].label}${note}「${e.repo}」\n${e.text}`, event });
+        items.push({ lane: 'git', start: e.ts, end: e.ts, mark, tip: `${hhmm(e.ts)} ${MARKS[mark].label}（取り込み）「${e.repo}」\n${e.text}`, event });
       } else if (e.t === 'memo') {
         items.push({ lane: 'memo', start: e.ts, end: e.ts, mark: 'memo', tip: `${hhmm(e.ts)} メモ\n${e.text}`, event });
       }
@@ -335,7 +333,7 @@ export class Timeline {
       ...(this.byLane.get('call')?.length ? ['<span><i class="sw is-call"></i>会議・通話</span>'] : []),
       ...(this.items.some((i) => i.cls === 'is-idle') ? ['<span><i class="sw is-idle"></i>操作なし</span>'] : []),
       ...(this.items.some((i) => i.cls === 'is-locked') ? ['<span><i class="sw is-locked"></i>離席</span>'] : []),
-      ...['commit', 'merge', 'pull', 'push', 'rebase', 'memo'].filter((m) => marks.has(m)).map((m) => `<span class="lg-mark mk-${m}">${MARKS[m].svg}${MARKS[m].label}</span>`),
+      ...['commit', 'merge', 'pull', 'rebase', 'memo'].filter((m) => marks.has(m)).map((m) => `<span class="lg-mark mk-${m}">${MARKS[m].svg}${MARKS[m].label}</span>`),
     ];
     this.els.legend.innerHTML = parts.join('');
     this.drawDetail();
@@ -432,10 +430,13 @@ export class Timeline {
     scroll.addEventListener(
       'wheel',
       (e) => {
-        if (!e.ctrlKey && !e.metaKey) return; // plain wheel scrolls the page as usual
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return; // plain wheel scrolls the page as usual
         e.preventDefault();
+        // with Shift held, Chromium may deliver the wheel as horizontal (deltaX)
+        const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        if (!delta) return;
         const rect = scroll.getBoundingClientRect();
-        this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0025), e.clientX - rect.left);
+        this.setZoom(this.zoom * Math.exp(-delta * 0.0025), e.clientX - rect.left);
       },
       { passive: false },
     );

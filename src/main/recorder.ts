@@ -394,25 +394,6 @@ export class Recorder extends EventEmitter {
           this.write({ t: 'gitop', ts, repo: name, action, text: text.slice(0, 300) });
         }
       });
-      // pushes leave "update by push" in the remote-tracking branch's reflog, not in HEAD's
-      execFile('git', ['-C', repo, 'for-each-ref', 'refs/remotes', '--format=%(refname)'], { timeout: 5000 }, (err, refs) => {
-        if (err) return;
-        for (const ref of refs.split('\n').map((r) => r.trim()).filter((r) => r && !r.endsWith('/HEAD')).slice(0, 30)) {
-          execFile('git', ['-C', repo, 'log', '-g', '--date=unix', '--format=%gd%x1f%gs', '-50', ref], { timeout: 10_000 }, (e2, out) => {
-            if (e2) return;
-            const branch = ref.replace(/^refs\/remotes\//, '');
-            for (const line of out.split('\n')) {
-              const [sel, text] = line.split('\x1f');
-              const ts = Number(sel?.match(/@\{(\d+)\}/)?.[1]) * 1000;
-              if (!ts || ts < sinceMs || !/^update by push/.test(text ?? '')) continue;
-              const key = `op|${name}|${ts}|push ${branch}`;
-              if (this.seenCommits.has(key)) continue;
-              this.seenCommits.add(key);
-              this.write({ t: 'gitop', ts, repo: name, action: 'push', text: `push ${branch}` });
-            }
-          });
-        }
-      });
     }
   }
 }

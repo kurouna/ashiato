@@ -223,7 +223,6 @@ code { background: var(--card2); border-radius: 4px; padding: 0 4px; font-size: 
 .mk-commit { --mk: #f5a524; }
 .mk-merge { --mk: #2ac3de; }
 .mk-pull { --mk: #7aa2f7; }
-.mk-push { --mk: #4cc38a; }
 .mk-rebase { --mk: #bb9af7; }
 .mk-memo { --mk: #c084fc; }
 .tl-span.hover, .tl-tick-item.hover { filter: brightness(1.18) saturate(1.1); box-shadow: 0 0 0 2px var(--text); z-index: 2; }
