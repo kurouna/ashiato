@@ -1,7 +1,8 @@
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import type { AshiatoApi } from '../preload';
-import { Category, DayData, JournalEvent, MODELS, PublicSettings, Status, StreamEvent, WorkBlock, dayKey, hhmm, startOfDay } from '../shared/types';
+import { DayData, JournalEvent, MODELS, PublicSettings, Status, StreamEvent, WorkBlock, dayKey, hhmm, startOfDay } from '../shared/types';
+import { CAT_COLOR, CAT_LABEL, Timeline, appColor } from './timeline';
 
 const api = (window as unknown as { ashiato: AshiatoApi }).ashiato;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -10,34 +11,6 @@ let date = dayKey(Date.now());
 let day: DayData | null = null;
 let settings: PublicSettings;
 let status: Status | null = null;
-let timelineEvents: JournalEvent[] = [];
-
-const CAT_LABEL: Record<Category, string> = {
-  coding: '実装',
-  review: 'レビュー',
-  debugging: 'デバッグ',
-  research: '調査',
-  writing: '執筆',
-  meeting: '会議',
-  communication: '連絡',
-  design: '設計',
-  admin: '事務',
-  break: '休憩',
-  other: 'その他',
-};
-const CAT_COLOR: Record<Category, string> = {
-  coding: '#7aa2f7',
-  review: '#bb9af7',
-  debugging: '#f7768e',
-  research: '#2ac3de',
-  writing: '#9ece6a',
-  meeting: '#e0af68',
-  communication: '#ff9e64',
-  design: '#73daca',
-  admin: '#a9b1d6',
-  break: '#4b5263',
-  other: '#787c99',
-};
 
 // ---------- streaming plumbing ----------
 const streams = new Map<string, (e: StreamEvent) => void>();
@@ -63,18 +36,8 @@ function fmtDur(ms: number) {
   const m = Math.round(ms / 60000);
   return m >= 60 ? `${Math.floor(m / 60)}時間${String(m % 60).padStart(2, '0')}分` : `${m}分`;
 }
-function hashHue(s: string) {
-  let h = 0;
-  for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h % 360;
-}
-const appColor = (app: string) => (app === '(非公開)' ? 'var(--private)' : `hsl(${hashHue(app.toLowerCase())} 62% 60%)`);
 function esc(s: string) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-function toMs(hm: string) {
-  const [h, m] = hm.split(':').map(Number);
-  return startOfDay(date) + (h * 60 + m) * 60000;
 }
 function setStatus(id: string, text: string, kind: 'muted' | 'busy' | 'err' = 'muted') {
   $(id).innerHTML = kind === 'busy' ? `<span class="spin"></span> ${esc(text)}` : kind === 'err' ? `<span class="err">${esc(text)}</span>` : esc(text);
@@ -100,6 +63,14 @@ function eventsWithLive(): JournalEvent[] {
 }
 
 // ---------- load & render ----------
+const timeline = new Timeline($('timeline'), $('tooltip'), async (ev, tip) => {
+  if (!confirm(`この記録を削除しますか？
+
+${tip}`)) return;
+  await api.deleteEvent(date, ev);
+  load();
+});
+
 async function load() {
   const asked = date;
   const d = await api.getDay(asked);
@@ -116,87 +87,10 @@ function render() {
   $('empty').classList.toggle('hidden', hasData);
   $('timeline').classList.toggle('hidden', !hasData);
   $('deleteDay').classList.toggle('hidden', !day?.events.length);
-  renderTimeline(evs);
+  timeline.render({ date, events: evs, deletable: day?.events.length ?? 0, blocks: day?.ai.blocks ?? [], today: date === dayKey(Date.now()) });
   renderStats(evs);
   renderBlocks(day?.ai.blocks);
   if (!reportBusy && !editing) renderReport(day?.ai.report);
-}
-
-function renderTimeline(evs: JournalEvent[]) {
-  const el = $('timeline');
-  timelineEvents = evs;
-  if (!evs.length) return (el.innerHTML = '');
-  const times = evs.flatMap((e) => ('ts' in e ? [e.ts] : [e.start, e.end]));
-  const dayStart = startOfDay(date);
-  const H = 3600_000;
-  let t0 = Math.floor((Math.min(...times) - dayStart) / H) * H + dayStart;
-  let t1 = Math.ceil((Math.max(...times) - dayStart) / H) * H + dayStart;
-  if (t1 - t0 < 4 * H) t1 = t0 + 4 * H;
-  t0 = Math.max(t0, dayStart);
-  t1 = Math.min(t1, dayStart + 24 * H);
-
-  const W = Math.max(600, el.clientWidth);
-  const left = 78;
-  const right = 20;
-  const x = (t: number) => left + ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * (W - left - right);
-  const blocks = day?.ai.blocks ?? [];
-  const hasCalls = evs.some((e) => e.t === 'call');
-  const lanes = [...(blocks.length ? ['作業'] : []), ...(hasCalls ? ['会議'] : []), 'アプリ', 'ファイル', 'git・メモ'];
-  const laneH = 30;
-  const top = 22;
-  const Ht = top + lanes.length * laneH + 6;
-  const laneY = (name: string) => top + lanes.indexOf(name) * laneH;
-
-  const parts: string[] = [];
-  for (let t = t0; t <= t1; t += H) {
-    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${top - 4}" y2="${Ht}" class="grid"/>`);
-    parts.push(`<text x="${x(t)}" y="12" class="axis">${new Date(t).getHours()}:00</text>`);
-  }
-  lanes.forEach((name) => parts.push(`<text x="0" y="${laneY(name) + 19}" class="lane">${name}</text>`));
-
-  for (const b of blocks) {
-    const s = toMs(b.start);
-    const e = Math.max(toMs(b.end), s + 60000);
-    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-    parts.push(
-      `<rect x="${x(s)}" y="${laneY('作業') + 3}" width="${Math.max(2, x(e) - x(s))}" height="${laneH - 8}" rx="4" fill="${CAT_COLOR[b.category] ?? '#888'}" data-tip="${esc(`${b.start}–${b.end} ${b.title}\n${CAT_LABEL[b.category] ?? ''}${b.project ? ' · ' + b.project : ''}\n${b.summary}`)}"/>`,
-    );
-  }
-  evs.forEach((e, i) => {
-    const live = i >= (day?.events.length ?? 0) ? '' : ` data-idx="${i}"`;
-    if (e.t === 'window' || e.t === 'idle') {
-      const fill = e.t === 'idle' ? (e.locked ? 'url(#lockPat)' : 'url(#idlePat)') : appColor(e.app);
-      const tip = e.t === 'idle' ? `${hhmm(e.start)}–${hhmm(e.end)} ${e.locked ? '画面ロック・離席' : 'キー・マウス操作なし'}` : `${hhmm(e.start)}–${hhmm(e.end)} (${fmtDur(e.end - e.start)})\n${e.app}\n${e.title}`;
-      parts.push(`<rect x="${x(e.start)}" y="${laneY('アプリ') + 3}" width="${Math.max(1, x(e.end) - x(e.start))}" height="${laneH - 8}" fill="${fill}"${live} data-tip="${esc(tip)}"/>`);
-    } else if (e.t === 'call') {
-      const tip = `${hhmm(e.start)}–${hhmm(e.end)} (${fmtDur(e.end - e.start)}) 会議・通話
-${[e.app, e.title].filter(Boolean).join(' · ')}`;
-      parts.push(`<rect x="${x(e.start)}" y="${laneY('会議') + 3}" width="${Math.max(2, x(e.end) - x(e.start))}" height="${laneH - 8}" rx="4" class="call"${live} data-tip="${esc(tip)}"/>`);
-    } else if (e.t === 'gitop') {
-      const cx = x(e.ts);
-      const cy = laneY('git・メモ') + laneH / 2 - 1;
-      parts.push(`<circle cx="${cx}" cy="${cy}" r="5.5" class="gitop"${live} data-tip="${esc(`${hhmm(e.ts)} git ${e.action}「${e.repo}」（取り込み）
-${e.text}`)}"/>`);
-    } else if (e.t === 'file') {
-      parts.push(`<rect x="${x(e.ts) - 1}" y="${laneY('ファイル') + 5}" width="2" height="${laneH - 12}" class="tick"${live} data-tip="${esc(`${hhmm(e.ts)} ${e.path}`)}"/>`);
-    } else if (e.t === 'commit') {
-      const cx = x(e.ts);
-      const cy = laneY('git・メモ') + laneH / 2 - 1;
-      parts.push(`<path d="M${cx} ${cy - 7}L${cx + 7} ${cy}L${cx} ${cy + 7}L${cx - 7} ${cy}Z" class="commit"${live} data-tip="${esc(`${hhmm(e.ts)} commit 「${e.repo}」\n${e.subject}`)}"/>`);
-    } else if (e.t === 'memo') {
-      parts.push(`<circle cx="${x(e.ts)}" cy="${laneY('git・メモ') + laneH / 2 - 1}" r="6" class="memo-dot"${live} data-tip="${esc(`${hhmm(e.ts)} メモ\n${e.text}`)}"/>`);
-    }
-  });
-  if (date === dayKey(Date.now())) {
-    const nx = x(Date.now());
-    parts.push(`<line x1="${nx}" x2="${nx}" y1="${top - 6}" y2="${Ht}" class="now"/>`);
-  }
-  el.innerHTML = `<svg width="${W}" height="${Ht}" viewBox="0 0 ${W} ${Ht}" role="img" aria-label="${date} のタイムライン">
-    <defs><pattern id="idlePat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="idle-bg"/><line x1="0" y1="0" x2="0" y2="6" class="idle-line" stroke-width="1.5"/></pattern><pattern id="lockPat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="idle-bg"/><line x1="0" y1="0" x2="0" y2="6" class="idle-line" stroke-width="4"/></pattern></defs>
-    ${parts.join('')}</svg>`;
-
-  const legend = blocks.length ? [...new Set(blocks.map((b) => b.category))] : [];
-  $('legend').innerHTML = legend.map((c) => `<span><i style="background:${CAT_COLOR[c]}"></i>${CAT_LABEL[c]}</span>`).join('');
 }
 
 function renderStats(evs: JournalEvent[]) {
@@ -249,27 +143,6 @@ function renderReport(report?: string) {
   if (!reportBusy) setStatus('reportStatus', day?.ai.reportAt ? `${new Date(day.ai.reportAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 保存` : '');
 }
 
-// ---------- tooltip & delete ----------
-const tip = $('tooltip');
-$('timeline').addEventListener('mousemove', (e) => {
-  const t = (e.target as Element).closest('[data-tip]');
-  if (!t) return tip.classList.add('hidden');
-  tip.textContent = t.getAttribute('data-tip');
-  tip.classList.remove('hidden');
-  const r = tip.getBoundingClientRect();
-  tip.style.left = `${Math.min(e.clientX + 14, innerWidth - r.width - 8)}px`;
-  tip.style.top = `${Math.min(e.clientY + 14, innerHeight - r.height - 8)}px`;
-});
-$('timeline').addEventListener('mouseleave', () => tip.classList.add('hidden'));
-$('timeline').addEventListener('contextmenu', async (e) => {
-  const t = (e.target as Element).closest('[data-idx]');
-  if (!t) return;
-  e.preventDefault();
-  const ev = timelineEvents[Number(t.getAttribute('data-idx'))];
-  if (!ev || !confirm(`この記録を削除しますか？\n\n${t.getAttribute('data-tip')}`)) return;
-  await api.deleteEvent(date, ev);
-  load();
-});
 $('deleteDay').addEventListener('click', async () => {
   if (await api.deleteDay(date)) load();
 });
@@ -466,6 +339,7 @@ $('closePreview').addEventListener('click', () => ($('previewDlg') as HTMLDialog
 
 // ---------- date nav ----------
 function goTo(d: string) {
+  if (d !== date) timeline.reset();
   date = d;
   if (editing) setEditing(false);
   $('thinkingBox').classList.add('hidden');

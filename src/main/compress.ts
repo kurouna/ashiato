@@ -64,7 +64,10 @@ export function compressDay(events: JournalEvent[], live?: DayData['live'], opts
   for (const e of all) {
     if (e.t === 'commit') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git commit 「${defang(e.repo)}」 ${defang(e.subject)}` });
     if (e.t === 'memo') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} 本人メモ: ${defang(e.text)}` });
-    if (e.t === 'gitop') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git ${e.action} 「${defang(e.repo)}」 ${defang(e.text)}（既存の変更の取り込み操作）` });
+    if (e.t === 'gitop') {
+      const note = e.action === 'push' ? '（コミット済みの変更を共有）' : '（既存の変更の取り込み操作）';
+      lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git ${e.action} 「${defang(e.repo)}」 ${defang(e.text)}${note}` });
+    }
     if (e.t === 'call' && e.end - e.start >= MIN_SPAN_MS) {
       const mins = Math.max(1, Math.round((e.end - e.start) / 60000));
       const what = [e.app && `[${defang(e.app)}]`, e.title && defang(e.title)].filter(Boolean).join(' ');
