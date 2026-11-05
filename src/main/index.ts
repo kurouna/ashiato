@@ -151,7 +151,7 @@ function applySettings(patch: Partial<Settings>) {
     app.setLoginItemSettings({ openAtLogin: next.openAtLogin, path: exe, args: ['--hidden'] });
   }
   if (patch.retentionDays !== undefined) store.purgeExpired();
-  recorder.reconfigure(prev.pollSeconds);
+  recorder.reconfigure(prev);
   refreshTray();
   broadcast('settings:changed', store.getPublicSettings());
   return store.getPublicSettings();
@@ -200,7 +200,7 @@ async function aiCall<T>(fn: () => Promise<T>): Promise<({ ok: true } & T) | { o
 function registerIpc() {
   handle('day:get', (_e, date) => {
     const d = assertDate(date);
-    return { date: d, events: store.readDay(d), ai: store.readAi(d), live: d === dayKey(Date.now()) ? recorder.live() : null };
+    return { date: d, events: store.readDay(d), ai: store.readAi(d), live: d === dayKey(Date.now()) ? recorder.live() : null, liveCall: d === dayKey(Date.now()) ? recorder.liveCall() : null };
   });
   handle('days:list', () => store.summarizeDays());
   handle('status:get', () => status());

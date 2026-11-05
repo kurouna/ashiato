@@ -193,3 +193,5 @@ legend { font-weight: 600; padding: 0 6px; font-size: 13px; }
 .facts > div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; background: var(--card2); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .facts b { color: var(--accent); }
 code { background: var(--card2); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+.timeline .call { fill: #e0af68; }
+.timeline .gitop { fill: none; stroke: var(--accent); stroke-width: 2; }

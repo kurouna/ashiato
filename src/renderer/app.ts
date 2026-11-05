@@ -93,8 +93,9 @@ function eventsWithLive(): JournalEvent[] {
   const live = day.live;
   if (live) {
     const now = Date.now();
-    evs.push(live.kind === 'idle' ? { t: 'idle', start: live.start, end: now } : { t: 'window', start: live.start, end: now, app: live.app, title: live.title });
+    evs.push(live.kind === 'idle' ? { t: 'idle', start: live.start, end: now, locked: live.locked } : { t: 'window', start: live.start, end: now, app: live.app, title: live.title });
   }
+  if (day.liveCall) evs.push({ t: 'call', start: day.liveCall.start, end: Date.now(), app: day.liveCall.app, title: day.liveCall.title });
   return evs;
 }
 
@@ -139,7 +140,8 @@ function renderTimeline(evs: JournalEvent[]) {
   const right = 20;
   const x = (t: number) => left + ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * (W - left - right);
   const blocks = day?.ai.blocks ?? [];
-  const lanes = [...(blocks.length ? ['作業'] : []), 'アプリ', 'ファイル', 'git・メモ'];
+  const hasCalls = evs.some((e) => e.t === 'call');
+  const lanes = [...(blocks.length ? ['作業'] : []), ...(hasCalls ? ['会議'] : []), 'アプリ', 'ファイル', 'git・メモ'];
   const laneH = 30;
   const top = 22;
   const Ht = top + lanes.length * laneH + 6;
@@ -163,9 +165,18 @@ function renderTimeline(evs: JournalEvent[]) {
   evs.forEach((e, i) => {
     const live = i >= (day?.events.length ?? 0) ? '' : ` data-idx="${i}"`;
     if (e.t === 'window' || e.t === 'idle') {
-      const fill = e.t === 'idle' ? 'url(#idlePat)' : appColor(e.app);
-      const tip = e.t === 'idle' ? `${hhmm(e.start)}–${hhmm(e.end)} 離席` : `${hhmm(e.start)}–${hhmm(e.end)} (${fmtDur(e.end - e.start)})\n${e.app}\n${e.title}`;
+      const fill = e.t === 'idle' ? (e.locked ? 'url(#lockPat)' : 'url(#idlePat)') : appColor(e.app);
+      const tip = e.t === 'idle' ? `${hhmm(e.start)}–${hhmm(e.end)} ${e.locked ? '画面ロック・離席' : 'キー・マウス操作なし'}` : `${hhmm(e.start)}–${hhmm(e.end)} (${fmtDur(e.end - e.start)})\n${e.app}\n${e.title}`;
       parts.push(`<rect x="${x(e.start)}" y="${laneY('アプリ') + 3}" width="${Math.max(1, x(e.end) - x(e.start))}" height="${laneH - 8}" fill="${fill}"${live} data-tip="${esc(tip)}"/>`);
+    } else if (e.t === 'call') {
+      const tip = `${hhmm(e.start)}–${hhmm(e.end)} (${fmtDur(e.end - e.start)}) 会議・通話
+${[e.app, e.title].filter(Boolean).join(' · ')}`;
+      parts.push(`<rect x="${x(e.start)}" y="${laneY('会議') + 3}" width="${Math.max(2, x(e.end) - x(e.start))}" height="${laneH - 8}" rx="4" class="call"${live} data-tip="${esc(tip)}"/>`);
+    } else if (e.t === 'gitop') {
+      const cx = x(e.ts);
+      const cy = laneY('git・メモ') + laneH / 2 - 1;
+      parts.push(`<circle cx="${cx}" cy="${cy}" r="5.5" class="gitop"${live} data-tip="${esc(`${hhmm(e.ts)} git ${e.action}「${e.repo}」（取り込み）
+${e.text}`)}"/>`);
     } else if (e.t === 'file') {
       parts.push(`<rect x="${x(e.ts) - 1}" y="${laneY('ファイル') + 5}" width="2" height="${laneH - 12}" class="tick"${live} data-tip="${esc(`${hhmm(e.ts)} ${e.path}`)}"/>`);
     } else if (e.t === 'commit') {
@@ -181,7 +192,7 @@ function renderTimeline(evs: JournalEvent[]) {
     parts.push(`<line x1="${nx}" x2="${nx}" y1="${top - 6}" y2="${Ht}" class="now"/>`);
   }
   el.innerHTML = `<svg width="${W}" height="${Ht}" viewBox="0 0 ${W} ${Ht}" role="img" aria-label="${date} のタイムライン">
-    <defs><pattern id="idlePat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="idle-bg"/><line x1="0" y1="0" x2="0" y2="6" class="idle-line" stroke-width="3"/></pattern></defs>
+    <defs><pattern id="idlePat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="idle-bg"/><line x1="0" y1="0" x2="0" y2="6" class="idle-line" stroke-width="1.5"/></pattern><pattern id="lockPat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="idle-bg"/><line x1="0" y1="0" x2="0" y2="6" class="idle-line" stroke-width="4"/></pattern></defs>
     ${parts.join('')}</svg>`;
 
   const legend = blocks.length ? [...new Set(blocks.map((b) => b.category))] : [];
@@ -572,6 +583,7 @@ function fillSettings() {
   $('localState').textContent = '';
   $<HTMLInputElement>('localKey').placeholder = settings.hasLocalKey ? '保存済み' : '不要なら空のまま';
   $<HTMLInputElement>('redact').checked = settings.redact;
+  $<HTMLInputElement>('detectCalls').checked = settings.detectCalls;
   $('folderList').innerHTML =
     settings.watchFolders.map((f, i) => `<li><span>${esc(f)}</span><button type="button" class="icon" data-rm="${i}" aria-label="削除">×</button></li>`).join('') || '<li class="muted">未登録</li>';
   $<HTMLTextAreaElement>('exclude').value = settings.excludeKeywords.join('\n');
@@ -712,6 +724,7 @@ $('saveSettings').addEventListener('click', async () => {
       localBaseUrl: $<HTMLInputElement>('localUrl').value.trim() || 'http://localhost:11434/v1',
       localModel: chosenModel(),
       redact: $<HTMLInputElement>('redact').checked,
+      detectCalls: $<HTMLInputElement>('detectCalls').checked,
       excludeKeywords: lines('exclude'),
       excludeApps: lines('excludeApps'),
       idleMinutes: Math.min(120, Math.max(1, num('idleMin', 5))),

@@ -1,12 +1,12 @@
 import * as z from 'zod';
 import { defang, redact } from '../../shared/redact';
-import { DayAi, WorkBlock, dayKey, evTime, hhmm } from '../../shared/types';
+import { DayAi, WorkBlock, dayKey, evTime, hhmm, startOfDay } from '../../shared/types';
 import { compressDay } from '../compress';
 import { Recorder } from '../recorder';
 import { Store } from '../store';
 import { ClaudeProvider, describeClaudeError } from './claude';
 import { LocalProvider, describeLocalError } from './local';
-import { ASK_SYSTEM, AiStop, ChatTurn, Emit, Provider, REPORT_SYSTEM, SEGMENT_SYSTEM, cleanBlocks, defineTool } from './prompts';
+import { ASK_SYSTEM, AiStop, ChatTurn, Emit, Provider, REPORT_SYSTEM, SEGMENT_SYSTEM, cleanBlocks, defineTool, reviewBreaks } from './prompts';
 
 const MAX_CHAT_TURNS = 20;
 
@@ -20,7 +20,8 @@ export class Ai {
   ) {}
 
   preview(date: string): string {
-    return compressDay(this.store.readDay(date), date === dayKey(Date.now()) ? this.recorder.live() : null, { redact: this.store.getSettings().redact });
+    const today = date === dayKey(Date.now());
+    return compressDay(this.store.readDay(date), today ? this.recorder.live() : null, { redact: this.store.getSettings().redact, liveCall: today ? this.recorder.liveCall() : null });
   }
 
   /** Where the data goes, for the UI to show before anything is sent. */
@@ -41,7 +42,7 @@ export class Ai {
     const timeline = this.requireTimeline(date);
     const provider = await this.provider();
     const res = await provider.segment(SEGMENT_SYSTEM, `日付: ${date}\n\n<timeline>\n${timeline}\n</timeline>`);
-    const blocks: WorkBlock[] = cleanBlocks(res.blocks);
+    const blocks: WorkBlock[] = reviewBreaks(cleanBlocks(res.blocks), this.store.readDay(date), startOfDay(date));
     if (!blocks.length) throw new AiStop('作業ブロックを作れませんでした');
     return this.store.writeAi(date, { blocks, blocksAt: Date.now(), model: res.model });
   }
@@ -155,7 +156,13 @@ export class Ai {
             if ((from && date < from) || (to && date > to)) continue;
             for (const e of store.readDay(date)) {
               const text =
-                e.t === 'window' ? `[${e.app}] ${e.title}` : e.t === 'file' ? `file ${e.path}` : e.t === 'commit' ? `commit <${e.repo}> ${e.subject}` : e.t === 'memo' ? `memo ${e.text}` : '';
+                e.t === 'window' ? `[${e.app}] ${e.title}` : e.t === 'file' ? `file ${e.path}` : e.t === 'commit' ? `commit <${e.repo}> ${e.subject}` : e.t === 'memo'
+                        ? `memo ${e.text}`
+                        : e.t === 'call'
+                          ? `会議・通話 [${e.app}] ${e.title}`
+                          : e.t === 'gitop'
+                            ? `git ${e.action} <${e.repo}> ${e.text}`
+                            : '';
               if (!text) continue;
               const low = text.toLowerCase();
               if (terms.every((t) => low.includes(t))) hits.push(`${date} ${hhmm(evTime(e))} ${text}`);

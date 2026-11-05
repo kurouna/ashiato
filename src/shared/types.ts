@@ -1,9 +1,14 @@
 export type JournalEvent =
   | { t: 'window'; start: number; end: number; app: string; title: string }
-  | { t: 'idle'; start: number; end: number }
+  /** locked: screen lock / sleep (really away); otherwise just no keyboard or mouse input */
+  | { t: 'idle'; start: number; end: number; locked?: boolean }
+  /** an ongoing call or meeting, recorded alongside whatever window is in front */
+  | { t: 'call'; start: number; end: number; app: string; title: string }
   | { t: 'file'; ts: number; path: string; root: string }
   | { t: 'commit'; ts: number; repo: string; hash: string; subject: string }
-  | { t: 'memo'; ts: number; text: string };
+  | { t: 'memo'; ts: number; text: string }
+  /** merge / pull / rebase: bringing in existing work, not authoring it */
+  | { t: 'gitop'; ts: number; repo: string; action: string; text: string };
 
 export const CATEGORIES = [
   'coding',
@@ -49,6 +54,7 @@ export interface Settings {
   excludeKeywords: string[];
   excludeApps: string[];
   redact: boolean;
+  detectCalls: boolean;
   idleMinutes: number;
   pollSeconds: number;
   retentionDays: number;
@@ -81,7 +87,8 @@ export interface DayData {
   date: string;
   events: JournalEvent[];
   ai: DayAi;
-  live?: { kind: 'window'; app: string; title: string; start: number } | { kind: 'idle'; start: number } | null;
+  live?: { kind: 'window'; app: string; title: string; start: number } | { kind: 'idle'; start: number; locked?: boolean } | null;
+  liveCall?: { start: number; app: string; title: string } | null;
 }
 
 export interface DaySummary {

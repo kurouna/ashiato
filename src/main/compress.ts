@@ -8,35 +8,40 @@ const FILE_BUCKET_MS = 10 * 60_000;
 /**
  * Turn a day's raw events into a compact, time-ordered text the model can read.
  * Short window hops are folded into their neighbours; file edits are bucketed per 10 minutes.
+ * The wording matters: the model categorises from it (see docs/how-it-works.md).
  */
-export function compressDay(events: JournalEvent[], live?: DayData['live'], opts: { redact?: boolean } = {}): string {
+export function compressDay(events: JournalEvent[], live?: DayData['live'], opts: { redact?: boolean; liveCall?: DayData['liveCall'] } = {}): string {
   const all = [...events];
+  const now = Date.now();
   if (live) {
-    const now = Date.now();
-    all.push(live.kind === 'idle' ? { t: 'idle', start: live.start, end: now } : { t: 'window', start: live.start, end: now, app: live.app, title: live.title });
+    all.push(live.kind === 'idle' ? { t: 'idle', start: live.start, end: now, locked: live.locked } : { t: 'window', start: live.start, end: now, app: live.app, title: live.title });
   }
+  if (opts.liveCall) all.push({ t: 'call', start: opts.liveCall.start, end: now, app: opts.liveCall.app, title: opts.liveCall.title });
   all.sort((a, b) => evTime(a) - evTime(b));
 
   type Line = { ts: number; text: string };
   const lines: Line[] = [];
 
   // windows: merge consecutive same app+title, then drop tiny hops
-  const spans: { start: number; end: number; app: string; title: string; idle: boolean }[] = [];
+  // idle is either a locked screen (away) or just no input (reading, listening, thinking)
+  const spans: { start: number; end: number; app: string; title: string; idle: false | 'locked' | 'noinput' }[] = [];
   for (const e of all) {
     if (e.t !== 'window' && e.t !== 'idle') continue;
     const app = e.t === 'window' ? e.app : '';
     const title = e.t === 'window' ? e.title : '';
+    const idle = e.t === 'idle' ? (e.locked ? 'locked' : 'noinput') : false;
     const prev = spans[spans.length - 1];
-    if (prev && prev.app === app && prev.title === title && prev.idle === (e.t === 'idle') && e.start - prev.end < MERGE_GAP_MS) {
+    if (prev && prev.app === app && prev.title === title && prev.idle === idle && e.start - prev.end < MERGE_GAP_MS) {
       prev.end = Math.max(prev.end, e.end);
     } else {
-      spans.push({ start: e.start, end: e.end, app, title, idle: e.t === 'idle' });
+      spans.push({ start: e.start, end: e.end, app, title, idle });
     }
   }
   for (const s of spans) {
     if (s.end - s.start < MIN_SPAN_MS) continue;
     const mins = Math.max(1, Math.round((s.end - s.start) / 60000));
-    const text = s.idle ? '(離席)' : `[${defang(s.app || '?')}] ${defang(s.title) || '(タイトルなし)'}`;
+    const text =
+      s.idle === 'locked' ? '(画面ロック・スリープ＝離席)' : s.idle ? '(キー・マウス操作なし)' : `[${defang(s.app || '?')}] ${defang(s.title) || '(タイトルなし)'}`;
     lines.push({ ts: s.start, text: `${hhmm(s.start)}–${hhmm(s.end)} (${mins}分) ${text}` });
   }
 
@@ -59,6 +64,12 @@ export function compressDay(events: JournalEvent[], live?: DayData['live'], opts
   for (const e of all) {
     if (e.t === 'commit') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git commit 「${defang(e.repo)}」 ${defang(e.subject)}` });
     if (e.t === 'memo') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} 本人メモ: ${defang(e.text)}` });
+    if (e.t === 'gitop') lines.push({ ts: e.ts, text: `${hhmm(e.ts)} git ${e.action} 「${defang(e.repo)}」 ${defang(e.text)}（既存の変更の取り込み操作）` });
+    if (e.t === 'call' && e.end - e.start >= MIN_SPAN_MS) {
+      const mins = Math.max(1, Math.round((e.end - e.start) / 60000));
+      const what = [e.app && `[${defang(e.app)}]`, e.title && defang(e.title)].filter(Boolean).join(' ');
+      lines.push({ ts: e.start, text: `${hhmm(e.start)}–${hhmm(e.end)} (${mins}分) 会議・通話に参加中 ${what}（この間の前面ウィンドウと並行）`.trimEnd() });
+    }
   }
 
   lines.sort((a, b) => a.ts - b.ts);

@@ -17,7 +17,9 @@ const at = (hm) => {
 
 const events = [];
 const win = (s, e, app, title) => events.push({ t: 'window', start: at(s), end: at(e), app, title });
-const idle = (s, e) => events.push({ t: 'idle', start: at(s), end: at(e) });
+const idle = (s, e, locked) => events.push({ t: 'idle', start: at(s), end: at(e), ...(locked ? { locked } : {}) });
+const call = (s, e, app, title = '') => events.push({ t: 'call', start: at(s), end: at(e), app, title });
+const gitop = (hm, action, text) => events.push({ t: 'gitop', ts: at(hm), repo: 'kanban-app', action, text });
 const file = (hm, p) => events.push({ t: 'file', ts: at(hm), path: p, root: 'C:/work/kanban-app' });
 const commit = (hm, subject) => events.push({ t: 'commit', ts: at(hm), repo: 'kanban-app', hash: Math.random().toString(16).slice(2).padEnd(40, '0'), subject });
 const memo = (hm, text) => events.push({ t: 'memo', ts: at(hm), text });
@@ -32,7 +34,10 @@ win('10:46', '11:28', 'Code', 'Board.test.tsx - kanban-app - Visual Studio Code'
 memo('11:05', '並び替え後に順序が保存されない原因は楽観的更新のロールバック漏れっぽい');
 win('11:28', '11:34', 'WindowsTerminal', 'npm test - kanban-app');
 win('11:34', '12:00', 'Teams', '定例ミーティング | Microsoft Teams');
-idle('12:00', '13:02');
+idle('12:00', '13:02', true);
+call('11:34', '12:00', 'Teams');
+call('16:00', '16:30', 'Teams'); // a meeting joined while writing docs in front
+gitop('17:30', 'pull', 'pull: Fast-forward');
 win('13:02', '13:15', 'Outlook', '受信トレイ - Outlook');
 win('13:15', '13:52', 'Code', 'api/columns.ts - kanban-app - Visual Studio Code');
 win('13:52', '14:10', 'chrome', 'localhost:5173 - Kanban - Google Chrome');
