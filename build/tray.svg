@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Notification-area mark: the footprint from build/icon.svg alone, so it stays
-  legible at 16 px. scripts/gen-icon.mjs renders it in amber (recording) and
-  slate (paused) by replacing FILL.
+  Notification-area mark: the footprint from build/icon.svg with the elec series
+  "E" badge in the bottom-left corner, as on the app icon. No card, so both
+  stay legible at 16 px. scripts/gen-icon.mjs renders the footprint in amber
+  (recording) and slate (paused) by replacing the placeholder fill; the badge keeps its colour.
 -->
 <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-  <g fill="FILL" transform="translate(16.5 17) rotate(14) scale(0.5) translate(-21 -33)">
+  <g fill="FILL" transform="translate(20.5 14.8) rotate(14) scale(0.45) translate(-21 -33)">
     <path d="M21 19 C33 19 36 33 32 44 C29 54 24 60 18 60 C11 60 8 53 9 45 C10 37 8 19 21 19 Z"/>
     <circle cx="9.5" cy="12" r="4.6"/>
     <circle cx="18.5" cy="6.5" r="5"/>
     <circle cx="27.5" cy="7.5" r="4.4"/>
     <circle cx="35" cy="13.5" r="3.6"/>
   </g>
+  <!-- elec series badge: the "E" mark, bottom-left -->
+  <circle cx="9.5" cy="22.5" r="8" fill="#0ea5e9" stroke="#ffffff" stroke-width="1.6"/>
+  <path d="M6 19 H13 M6 22.5 H11 M6 26 H13" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
 </svg>

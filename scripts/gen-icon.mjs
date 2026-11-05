@@ -22,8 +22,8 @@ const targets = [
   { out: join(ROOT, 'build', 'icon.png'), size: 1024, svg: icon },
   { out: join(ROOT, 'resources', 'icons', 'icon.png'), size: 256, svg: icon },
   ...[16, 20, 24, 32].flatMap((size) => [
-    { out: join(ROOT, 'resources', 'icons', `tray-${size}.png`), size, svg: tray.replace('FILL', '#f5c97a') },
-    { out: join(ROOT, 'resources', 'icons', `tray-paused-${size}.png`), size, svg: tray.replace('FILL', '#94a3b8') },
+    { out: join(ROOT, 'resources', 'icons', `tray-${size}.png`), size, svg: tray.replace(/fill="FILL"/g, 'fill="#f5c97a"') },
+    { out: join(ROOT, 'resources', 'icons', `tray-paused-${size}.png`), size, svg: tray.replace(/fill="FILL"/g, 'fill="#94a3b8"') },
   ]),
 ];
 
