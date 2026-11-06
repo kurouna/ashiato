@@ -3,7 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import * as z from 'zod';
-import { LocalProvider } from '../src/main/ai/local';
+import { LocalProvider, describeLocalError } from '../src/main/ai/local';
 import { defineTool } from '../src/main/ai/prompts';
 
 // A tiny OpenAI-compatible server that behaves like Ollama / LM Studio would.
@@ -28,6 +28,12 @@ before(async () => {
     }
     const j = JSON.parse(body);
     seen.push(j);
+    // a GPU too busy to start in time, and a proxy that gives up first
+    if (j.model === 'slow') await new Promise((r) => setTimeout(r, 1500));
+    if (j.model === 'gateway') {
+      res.writeHead(504, { 'content-type': 'text/plain' });
+      return res.end('Gateway Timeout');
+    }
     if (j.tools && !toolsSupported) {
       res.writeHead(400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: { message: 'model does not support tools' } }));
@@ -37,6 +43,11 @@ before(async () => {
       const content = '<think>考え中</think>```json\n{"blocks":[{"start":"9:00","end":"10:30","title":"実装","project":"p","category":"coding","summary":"s"}]}\n```';
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ id: 'x', object: 'chat.completion', created: 0, model: 'm', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }] }));
+    }
+    if (j.response_format) {
+      // structured output, streamed: think tags + fenced JSON split across chunks, like many local models
+      const content = '<think>考え中</think>```json\n{"blocks":[{"start":"9:00","end":"10:30","title":"実装","project":"p","category":"coding","summary":"s"}]}\n```';
+      return sse(res, [{ delta: { content: content.slice(0, 20) } }, { delta: { content: content.slice(20, 70) } }, { delta: { content: content.slice(70) }, finish_reason: 'stop' }]);
     }
     const last = j.messages[j.messages.length - 1];
     if (j.tools && last.role === 'user') {
@@ -66,7 +77,10 @@ test('listModels reads /models', async () => {
 
 test('segment requests a JSON schema and parses fenced output', async () => {
   const p = new LocalProvider(base, 'qwen3:14b');
-  const res = await p.segment('sys', 'user', new AbortController().signal);
+  const { out, emit } = collect();
+  const res = await p.segment('sys', 'user', new AbortController().signal, emit);
+  assert.ok(out.text.length > 0 && out.thinking === '考え中', 'progress is streamed while the JSON arrives');
+  assert.equal(seen.at(-1).stream, true);
   assert.equal(res.blocks[0].title, '実装');
   assert.equal(seen.at(-1).response_format.type, 'json_schema');
 });
@@ -102,4 +116,20 @@ test('ask falls back to pasted context when the model has no tool support', asyn
   assert.equal(answer, 'こんにちは、記録です');
   assert.match(seen.at(-1).messages[0].content, /RECENT/);
   toolsSupported = true;
+});
+
+test('a server that does not start answering in time reports a timeout, not "cannot connect"', async () => {
+  const p = new LocalProvider(base, 'slow', undefined, 300);
+  const { emit } = collect();
+  const err = await p.report('sys', 'user', emit, new AbortController().signal).then(() => null, (e) => e);
+  const msg = describeLocalError(err, base, 10) ?? '';
+  assert.match(msg, /10 分以内に応答を始めませんでした/);
+  assert.doesNotMatch(msg, /接続できません/);
+});
+
+test('a proxy timeout (504) is named as such', async () => {
+  const p = new LocalProvider(base, 'gateway');
+  const { emit } = collect();
+  const err = await p.report('sys', 'user', emit, new AbortController().signal).then(() => null, (e) => e);
+  assert.match(describeLocalError(err, base) ?? '', /プロキシやゲートウェイ.*504/);
 });

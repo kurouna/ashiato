@@ -162,8 +162,43 @@ function aiName() {
 }
 const shortDay = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
+const fmtSecs = (s: number) => (s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`);
+
+/**
+ * Live progress of one AI request: which phase it is in and for how long, so a slow (busy) server
+ * reads as "still waiting" or "still arriving" instead of looking stuck.
+ */
+class Progress {
+  readonly started = Date.now();
+  readonly dest = aiName();
+  phase: 'wait' | 'thinking' | 'text' = 'wait';
+  chars = 0;
+
+  on(e: StreamEvent) {
+    if (e.kind === 'thinking' && this.phase === 'wait') this.phase = 'thinking';
+    else if (e.kind === 'text') {
+      this.phase = 'text';
+      this.chars += e.data.length;
+    }
+  }
+
+  secs() {
+    return Math.round((Date.now() - this.started) / 1000);
+  }
+
+  text(receiving: string) {
+    const t = this.secs();
+    if (this.phase === 'wait') {
+      const busy = t >= 20 && settings.provider === 'local' ? `（サーバーが混雑していると順番を待ちます。上限 ${settings.aiTimeoutMinutes} 分）` : '';
+      return `${this.dest} の応答を待っています… ${fmtSecs(t)}${busy}`;
+    }
+    if (this.phase === 'thinking') return `${this.dest} が考えています… ${fmtSecs(t)}`;
+    return `${receiving}… ${this.chars.toLocaleString()} 文字・${fmtSecs(t)}`;
+  }
+}
+
 // One organise job at a time. It belongs to the day it was started for, which may not be the day on screen.
-let segmentJob: { date: string; reqId: string; started: number; dest: string } | null = null;
+let segmentJob: { date: string; reqId: string; progress: Progress } | null = null;
 let segmentNote = '';
 
 function renderSegmentStatus() {
@@ -171,8 +206,10 @@ function renderSegmentStatus() {
   $<HTMLButtonElement>('segmentBtn').disabled = !!job;
   $('cancelSegment').classList.toggle('hidden', !job);
   if (job) {
-    const secs = Math.round((Date.now() - job.started) / 1000);
-    const text = job.date === date ? `${job.dest} で整理しています… ${secs} 秒` : `${shortDay(job.date)} の作業を整理しています（${secs} 秒）。終わるとその日に保存されます`;
+    const text =
+      job.date === date
+        ? job.progress.text('整理結果を受信しています')
+        : `${shortDay(job.date)} の作業を整理しています（${fmtSecs(job.progress.secs())}）。終わるとその日に保存されます`;
     return setStatus('segmentStatus', text, 'busy');
   }
   if (segmentNote) return setStatus('segmentStatus', segmentNote, segmentNote.startsWith('✓') ? 'muted' : 'err');
@@ -182,10 +219,12 @@ setInterval(() => segmentJob && renderSegmentStatus(), 1000);
 
 $('segmentBtn').addEventListener('click', async () => {
   if (segmentJob) return;
-  const job = (segmentJob = { date, reqId: newReq(), started: Date.now(), dest: aiName() });
+  const job = (segmentJob = { date, reqId: newReq(), progress: new Progress() });
   segmentNote = '';
+  streams.set(job.reqId, (e) => job.progress.on(e));
   renderSegmentStatus();
   const res = await api.segment(job.date, job.reqId);
+  streams.delete(job.reqId);
   segmentJob = null;
   if (job.date !== date) {
     // finished for a day that is no longer on screen: say so here instead of leaving a spinner behind
@@ -221,23 +260,25 @@ $('reportBtn').addEventListener('click', async () => {
   box.open = true;
   $('thinkingText').textContent = '';
   $('reportBody').innerHTML = '';
-  setStatus('reportStatus', `${aiName()} が考えています…`, 'busy');
+  const progress = new Progress();
+  const tick = () => forDate === date && setStatus('reportStatus', progress.text('書いています'), 'busy');
+  tick();
+  const ticker = setInterval(tick, 1000);
   streams.set(reqId, (e) => {
+    progress.on(e);
     if (forDate !== date) return;
     if (e.kind === 'thinking') {
       thinking += e.data;
       box.classList.remove('hidden');
       $('thinkingText').textContent = thinking;
     } else if (e.kind === 'text') {
-      if (!text) {
-        box.open = false;
-        setStatus('reportStatus', '書いています…', 'busy');
-      }
+      if (!text) box.open = false;
       text += e.data;
       $('reportBody').innerHTML = md(text);
     }
   });
   const res = await api.report(forDate, reqId);
+  clearInterval(ticker);
   streams.delete(reqId);
   reportBusy = false;
   reportReq = null;
@@ -323,13 +364,22 @@ async function ask(q: string) {
   $<HTMLButtonElement>('askBtn').disabled = true;
   $('cancelAsk').classList.remove('hidden');
   bubble('user', esc(q));
-  const out = bubble('bot', '<div class="tools"></div><details class="thinking hidden"><summary>思考の要約</summary><div class="th"></div></details><div class="md body"><span class="spin"></span></div>');
+  const out = bubble(
+    'bot',
+    '<div class="tools"></div><details class="thinking hidden"><summary>思考の要約</summary><div class="th"></div></details><div class="md body"></div><div class="progress muted small"><span class="spin"></span> <span class="ptext"></span></div>',
+  );
   const tools = out.querySelector('.tools')!;
   const th = out.querySelector('details')!;
   const body = out.querySelector('.body')!;
+  const progressEl = out.querySelector('.progress') as HTMLElement;
+  const progress = new Progress();
+  const tick = () => (progressEl.querySelector('.ptext')!.textContent = progress.text('回答を受信しています'));
+  tick();
+  const ticker = setInterval(tick, 1000);
   let text = '';
   let thinking = '';
   streams.set(reqId, (e) => {
+    progress.on(e);
     if (e.kind === 'text') {
       text += e.data;
       body.innerHTML = md(text);
@@ -348,6 +398,8 @@ async function ask(q: string) {
     chatLog.scrollTop = chatLog.scrollHeight;
   });
   const res = await api.ask(q, reqId, askRange());
+  clearInterval(ticker);
+  progressEl.remove();
   streams.delete(reqId);
   body.innerHTML = res.ok ? md(res.answer || text) : `<span class="err">${esc(res.error)}</span>`;
   askReq = null;
@@ -523,6 +575,7 @@ function fillSettings() {
   $('localState').textContent = '';
   $<HTMLInputElement>('localKey').placeholder = settings.hasLocalKey ? '保存済み' : '不要なら空のまま';
   $<HTMLInputElement>('redact').checked = settings.redact;
+  $<HTMLInputElement>('aiTimeout').value = String(settings.aiTimeoutMinutes);
   $<HTMLInputElement>('detectCalls').checked = settings.detectCalls;
   $('folderList').innerHTML =
     settings.watchFolders.map((f, i) => `<li><span>${esc(f)}</span><button type="button" class="icon" data-rm="${i}" aria-label="削除">×</button></li>`).join('') || '<li class="muted">未登録</li>';
@@ -550,6 +603,7 @@ function formState() {
     $<HTMLInputElement>('localUrl').value.trim(),
     chosenModel(),
     $<HTMLInputElement>('redact').checked,
+    $<HTMLInputElement>('aiTimeout').value,
     $<HTMLInputElement>('detectCalls').checked,
     $<HTMLTextAreaElement>('exclude').value,
     $<HTMLTextAreaElement>('excludeApps').value,
@@ -705,6 +759,7 @@ $('saveSettings').addEventListener('click', async () => {
       localBaseUrl: $<HTMLInputElement>('localUrl').value.trim() || 'http://localhost:11434/v1',
       localModel: chosenModel(),
       redact: $<HTMLInputElement>('redact').checked,
+      aiTimeoutMinutes: Math.min(60, Math.max(1, num('aiTimeout', 10))),
       detectCalls: $<HTMLInputElement>('detectCalls').checked,
       excludeKeywords: lines('exclude'),
       excludeApps: lines('excludeApps'),

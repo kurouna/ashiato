@@ -55,6 +55,8 @@ export interface Settings {
   excludeApps: string[];
   redact: boolean;
   detectCalls: boolean;
+  /** how long an AI request may wait for the server to start answering */
+  aiTimeoutMinutes: number;
   idleMinutes: number;
   pollSeconds: number;
   retentionDays: number;

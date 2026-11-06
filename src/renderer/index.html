@@ -203,6 +203,10 @@
             </label>
           </div>
           <label class="check"><input type="checkbox" id="redact" /> 送信前にメールアドレス・URL のパス・トークン・長い番号をマスクする</label>
+          <label>AI の待ち時間の上限（分）
+            <input type="number" id="aiTimeout" min="1" max="60" />
+            <small class="muted">AI が応答を始めるまで待つ時間です（1〜60 分）。ローカル LLM のサーバーが混雑していて順番待ちになる場合は長めにしてください。応答が始まったあとは、書き終わるまで待ちます。</small>
+          </label>
         </fieldset>
 
         <fieldset>

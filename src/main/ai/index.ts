@@ -43,11 +43,11 @@ export class Ai {
     this.running.get(reqId)?.abort();
   }
 
-  async segment(date: string, reqId: string): Promise<DayAi> {
+  async segment(date: string, reqId: string, emit: Emit): Promise<DayAi> {
     const timeline = this.requireTimeline(date);
     const provider = await this.provider();
     const user = `日付: ${date}\n\n<timeline>\n${timeline}\n</timeline>`;
-    const res = await this.withAbort(reqId, (signal) => provider.segment(SEGMENT_SYSTEM, user, signal));
+    const res = await this.withAbort(reqId, (signal) => provider.segment(SEGMENT_SYSTEM, user, signal, emit));
     const blocks: WorkBlock[] = reviewBreaks(cleanBlocks(res.blocks), this.store.readDay(date), startOfDay(date));
     if (!blocks.length) throw new AiStop('作業ブロックを作れませんでした');
     return this.store.writeAi(date, { blocks, blocksAt: Date.now(), model: res.model });
@@ -88,7 +88,7 @@ export class Ai {
 
   describeError(err: unknown): string {
     const s = this.store.getSettings();
-    const known = s.provider === 'local' ? describeLocalError(err, s.localBaseUrl) : describeClaudeError(err);
+    const known = s.provider === 'local' ? describeLocalError(err, s.localBaseUrl, s.aiTimeoutMinutes) : describeClaudeError(err, s.aiTimeoutMinutes);
     if (known) return known;
     if (err instanceof z.ZodError) return err.issues[0]?.message ?? '入力が不正です';
     if (err instanceof Error) {
@@ -107,8 +107,9 @@ export class Ai {
 
   private async provider(): Promise<Provider> {
     const s = this.store.getSettings();
-    if (s.provider === 'local') return new LocalProvider(s.localBaseUrl, s.localModel, await this.store.getSecret('local'));
-    return new ClaudeProvider(await this.store.getSecret('claude'), s.model);
+    const timeoutMs = s.aiTimeoutMinutes * 60_000;
+    if (s.provider === 'local') return new LocalProvider(s.localBaseUrl, s.localModel, await this.store.getSecret('local'), timeoutMs);
+    return new ClaudeProvider(await this.store.getSecret('claude'), s.model, timeoutMs);
   }
 
   private async withAbort<T>(reqId: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {

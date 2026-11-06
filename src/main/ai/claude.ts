@@ -7,14 +7,14 @@ export class ClaudeProvider implements Provider {
   private client: Anthropic;
   private base: { model: string; betas?: Anthropic.Beta.AnthropicBeta[]; fallbacks?: 'default' };
 
-  constructor(apiKey: string | undefined, model: string) {
+  constructor(apiKey: string | undefined, model: string, timeoutMs = 10 * 60_000) {
     this.label = model;
-    this.client = new Anthropic({ apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY ?? null });
+    this.client = new Anthropic({ apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY ?? null, timeout: timeoutMs });
     // Server-side fallback reroutes a safety decline to a suitable model; Haiku has no server-side fallback.
     this.base = model.startsWith('claude-haiku') ? { model } : { model, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
   }
 
-  async segment(system: string, user: string, signal: AbortSignal) {
+  async segment(system: string, user: string, signal: AbortSignal, _emit: Emit) {
     const msg = await this.client.beta.messages.parse(
       {
         ...this.base,
@@ -110,8 +110,11 @@ function assertNotRefused(stop: string | null | undefined) {
   if (stop === 'refusal') throw new AiStop('Claude がこのリクエストへの回答を辞退しました。除外キーワードで該当ウィンドウを外すと通る場合があります。');
 }
 
-export function describeClaudeError(err: unknown): string | null {
+export function describeClaudeError(err: unknown, timeoutMin?: number): string | null {
   if (err instanceof Anthropic.APIUserAbortError) return '中止しました';
+  // the timeout error is a subclass of the connection error: check it first
+  if (err instanceof Anthropic.APIConnectionTimeoutError) return `Claude API から${timeoutMin ? ` ${timeoutMin} 分` : ''}以内に応答がありませんでした。⚙ の「AI の待ち時間の上限」を延ばすか、時間をおいて再試行してください。`;
+  if (err instanceof Anthropic.APIError && (err.status === 529 || err.status === 503)) return `Claude API が混雑しています（${err.status}）。しばらく待ってから再試行してください。`;
   if (err instanceof Anthropic.AuthenticationError) return 'Claude API キーが無効です。設定から確認してください。';
   if (err instanceof Anthropic.RateLimitError) return 'レート制限に達しました。少し待ってから再試行してください。';
   if (err instanceof Anthropic.APIConnectionError) return 'Claude API に接続できませんでした。ネットワークやプロキシ設定を確認してください。';

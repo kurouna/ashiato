@@ -250,3 +250,4 @@ code { background: var(--card2); border-radius: 4px; padding: 0 4px; font-size: 
 #settingsVersion { margin-right: auto; }
 .askscope { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
 .askscope select, .askscope input { padding: 3px 8px; }
+.msg .progress { margin-top: 4px; }
