@@ -87,7 +87,7 @@ export type Emit = (kind: 'text' | 'thinking' | 'tool', data: string) => void;
 
 export interface Provider {
   readonly label: string;
-  segment(system: string, user: string): Promise<{ blocks: z.infer<typeof BlocksSchema>['blocks']; model: string }>;
+  segment(system: string, user: string, signal: AbortSignal): Promise<{ blocks: z.infer<typeof BlocksSchema>['blocks']; model: string }>;
   report(system: string, user: string, emit: Emit, signal: AbortSignal): Promise<{ text: string; model: string }>;
   ask(system: string, turns: ChatTurn[], tools: ToolDef[], emit: Emit, signal: AbortSignal, fallbackContext: () => string): Promise<string>;
 }

@@ -66,7 +66,7 @@ test('listModels reads /models', async () => {
 
 test('segment requests a JSON schema and parses fenced output', async () => {
   const p = new LocalProvider(base, 'qwen3:14b');
-  const res = await p.segment('sys', 'user');
+  const res = await p.segment('sys', 'user', new AbortController().signal);
   assert.equal(res.blocks[0].title, '実装');
   assert.equal(seen.at(-1).response_format.type, 'json_schema');
 });

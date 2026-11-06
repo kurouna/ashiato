@@ -14,14 +14,17 @@ export class ClaudeProvider implements Provider {
     this.base = model.startsWith('claude-haiku') ? { model } : { model, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
   }
 
-  async segment(system: string, user: string) {
-    const msg = await this.client.beta.messages.parse({
-      ...this.base,
-      max_tokens: 16000,
-      output_config: { effort: 'medium', format: betaZodOutputFormat(BlocksSchema) },
-      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: user }],
-    });
+  async segment(system: string, user: string, signal: AbortSignal) {
+    const msg = await this.client.beta.messages.parse(
+      {
+        ...this.base,
+        max_tokens: 16000,
+        output_config: { effort: 'medium', format: betaZodOutputFormat(BlocksSchema) },
+        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: user }],
+      },
+      { signal },
+    );
     assertNotRefused(msg.stop_reason);
     const blocks = msg.parsed_output?.blocks;
     if (!blocks) throw new AiStop('作業ブロックを読み取れませんでした（出力が途中で切れた可能性があります）');

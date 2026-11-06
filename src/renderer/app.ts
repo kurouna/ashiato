@@ -124,7 +124,7 @@ function renderStats(evs: JournalEvent[]) {
 
 function renderBlocks(blocks?: WorkBlock[]) {
   const el = $('blockList');
-  if (!segmentBusy) setStatus('segmentStatus', day?.ai.blocksAt ? `${new Date(day.ai.blocksAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} に整理（${day.ai.model ?? ''}）` : '');
+  renderSegmentStatus();
   if (!blocks?.length) {
     el.innerHTML = `<p class="muted">AI がタイムラインを読み、細かなアプリの行き来を「意味のある作業のまとまり」に整理します。</p>`;
     return;
@@ -151,21 +151,55 @@ $('deleteDay').addEventListener('click', async () => {
 });
 
 // ---------- AI: blocks ----------
-let segmentBusy = false;
+/** Which AI the next request goes to, in words, so a stale server/model setting is visible. */
+function aiName() {
+  if (settings.provider !== 'local') return `Claude（${settings.model}）`;
+  let host = settings.localBaseUrl;
+  try {
+    host = new URL(settings.localBaseUrl).host;
+  } catch {}
+  return `ローカル LLM（${settings.localModel || 'モデル未設定'} @ ${host}）`;
+}
+const shortDay = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+
+// One organise job at a time. It belongs to the day it was started for, which may not be the day on screen.
+let segmentJob: { date: string; reqId: string; started: number; dest: string } | null = null;
+let segmentNote = '';
+
+function renderSegmentStatus() {
+  const job = segmentJob;
+  $<HTMLButtonElement>('segmentBtn').disabled = !!job;
+  $('cancelSegment').classList.toggle('hidden', !job);
+  if (job) {
+    const secs = Math.round((Date.now() - job.started) / 1000);
+    const text = job.date === date ? `${job.dest} で整理しています… ${secs} 秒` : `${shortDay(job.date)} の作業を整理しています（${secs} 秒）。終わるとその日に保存されます`;
+    return setStatus('segmentStatus', text, 'busy');
+  }
+  if (segmentNote) return setStatus('segmentStatus', segmentNote, segmentNote.startsWith('✓') ? 'muted' : 'err');
+  setStatus('segmentStatus', day?.ai.blocksAt ? `${new Date(day.ai.blocksAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} に整理（${day.ai.model ?? ''}）` : '');
+}
+setInterval(() => segmentJob && renderSegmentStatus(), 1000);
+
 $('segmentBtn').addEventListener('click', async () => {
-  const forDate = date;
-  const btn = $<HTMLButtonElement>('segmentBtn');
-  btn.disabled = true;
-  segmentBusy = true;
-  setStatus('segmentStatus', 'AI が整理しています…', 'busy');
-  const res = await api.segment(forDate);
-  segmentBusy = false;
-  btn.disabled = false;
-  if (forDate !== date) return;
-  if (!res.ok) return setStatus('segmentStatus', res.error, 'err');
+  if (segmentJob) return;
+  const job = (segmentJob = { date, reqId: newReq(), started: Date.now(), dest: aiName() });
+  segmentNote = '';
+  renderSegmentStatus();
+  const res = await api.segment(job.date, job.reqId);
+  segmentJob = null;
+  if (job.date !== date) {
+    // finished for a day that is no longer on screen: say so here instead of leaving a spinner behind
+    segmentNote = res.ok ? `✓ ${shortDay(job.date)} の作業を整理しました` : `${shortDay(job.date)} の整理に失敗しました: ${res.error}`;
+    return renderSegmentStatus();
+  }
+  if (!res.ok) {
+    segmentNote = res.error;
+    return renderSegmentStatus();
+  }
   if (day) day.ai = res.ai;
   render();
 });
+$('cancelSegment').addEventListener('click', () => segmentJob && api.cancel(segmentJob.reqId));
 
 // ---------- AI: report ----------
 let reportBusy = false;
@@ -187,7 +221,7 @@ $('reportBtn').addEventListener('click', async () => {
   box.open = true;
   $('thinkingText').textContent = '';
   $('reportBody').innerHTML = '';
-  setStatus('reportStatus', '考えています…', 'busy');
+  setStatus('reportStatus', `${aiName()} が考えています…`, 'busy');
   streams.set(reqId, (e) => {
     if (forDate !== date) return;
     if (e.kind === 'thinking') {
@@ -209,7 +243,8 @@ $('reportBtn').addEventListener('click', async () => {
   reportReq = null;
   btn.disabled = false;
   $('cancelReport').classList.add('hidden');
-  if (forDate !== date) return;
+  // the user moved to another day meanwhile: the result is saved for forDate; just clear the busy state here
+  if (forDate !== date) return renderReport(day?.ai.report);
   if (!res.ok) {
     renderReport(day?.ai.report);
     return setStatus('reportStatus', res.error, 'err');
@@ -363,7 +398,10 @@ $('closePreview').addEventListener('click', () => ($('previewDlg') as HTMLDialog
 
 // ---------- date nav ----------
 function goTo(d: string) {
-  if (d !== date) timeline.reset();
+  if (d !== date) {
+    timeline.reset();
+    segmentNote = '';
+  }
   date = d;
   if (editing) setEditing(false);
   $('thinkingBox').classList.add('hidden');
@@ -502,13 +540,48 @@ function fillSettings() {
   $<HTMLInputElement>('openAtLogin').checked = settings.openAtLogin;
   $('settingsMsg').textContent = '';
 }
+// What the form held when it was opened; closing with something different asks first,
+// so a server URL that was only tested (not saved) is never silently thrown away.
+let formSnapshot = '';
+function formState() {
+  return JSON.stringify([
+    radios().find((r) => r.checked)?.value,
+    $<HTMLSelectElement>('model').value,
+    $<HTMLInputElement>('localUrl').value.trim(),
+    chosenModel(),
+    $<HTMLInputElement>('redact').checked,
+    $<HTMLInputElement>('detectCalls').checked,
+    $<HTMLTextAreaElement>('exclude').value,
+    $<HTMLTextAreaElement>('excludeApps').value,
+    $<HTMLInputElement>('idleMin').value,
+    $<HTMLInputElement>('poll').value,
+    $<HTMLInputElement>('retention').value,
+    $<HTMLTextAreaElement>('template').value,
+    $<HTMLInputElement>('openAtLogin').checked,
+  ]);
+}
+const aiFormChanged = () =>
+  (radios().find((r) => r.checked)?.value ?? 'claude') !== settings.provider ||
+  $<HTMLInputElement>('localUrl').value.trim() !== settings.localBaseUrl ||
+  chosenModel() !== settings.localModel;
+
 function openSettings() {
   fillSettings();
+  formSnapshot = formState();
   dlg.showModal();
   if (settings.provider === 'local') probeLocal();
 }
+function closeSettings() {
+  if (formState() !== formSnapshot && !confirm('保存していない変更があります。保存せずに閉じますか？\n\n（変更を反映するには「保存」を押してください）')) return;
+  dlg.close();
+}
 $('openSettings').addEventListener('click', openSettings);
-$('closeSettings').addEventListener('click', () => dlg.close());
+$('closeSettings').addEventListener('click', closeSettings);
+// Esc closes a <dialog> by itself; route it through the same check
+dlg.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeSettings();
+});
 
 const ipcMessage = (err: unknown) => (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 async function saveSecret(name: 'claude' | 'local', inputId: string) {
@@ -595,6 +668,7 @@ async function probeLocal() {
   const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host);
   $('localState').innerHTML =
     (res.models.length ? `✓ 接続できました（モデル ${res.models.length} 個）` : '⚠ 接続できましたが、モデルがありません。サーバー側でモデルを用意してください（例: ollama pull qwen3:14b）') +
+    (aiFormChanged() ? '<br><b>「保存」を押すと、この接続先とモデルが使われます。</b>' : '') +
     (!loopback && url.startsWith('http:') ? '<br><span class="err">⚠ この PC 外のサーバーへ暗号化されていない http で送信します。社内ネットワーク内か確認してください。</span>' : '');
 }
 $('testLocal').addEventListener('click', probeLocal);

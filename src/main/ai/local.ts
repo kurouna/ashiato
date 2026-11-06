@@ -20,7 +20,7 @@ export class LocalProvider implements Provider {
   ) {
     if (!model) throw new AiStop('ローカル LLM のモデル名が設定されていません。⚙ から「接続テスト」でモデルを選んでください。');
     this.label = `${model} @ ${hostOf(baseURL)}`;
-    this.client = new OpenAI({ baseURL, apiKey: apiKey || 'not-needed', timeout: 10 * 60_000, maxRetries: 1 });
+    this.client = new OpenAI({ baseURL, apiKey: apiKey || 'not-needed', timeout: 10 * 60_000, maxRetries: 0 });
   }
 
   static async listModels(baseURL: string, apiKey?: string): Promise<string[]> {
@@ -35,7 +35,7 @@ export class LocalProvider implements Provider {
     return ids.sort();
   }
 
-  async segment(system: string, user: string) {
+  async segment(system: string, user: string, signal: AbortSignal) {
     const schema = z.toJSONSchema(BlocksSchema);
     const messages: Msg[] = [
       { role: 'system', content: system },
@@ -43,17 +43,17 @@ export class LocalProvider implements Provider {
     ];
     let content: string;
     try {
-      content = await this.complete(messages, { type: 'json_schema', json_schema: { name: 'work_blocks', schema, strict: true } });
+      content = await this.complete(messages, signal, { type: 'json_schema', json_schema: { name: 'work_blocks', schema, strict: true } });
     } catch (err) {
       if (!(err instanceof OpenAI.BadRequestError)) throw err;
       // server without json_schema support: plain JSON mode with the schema spelled out
       messages[0] = { role: 'system', content: `${system}\n\n次の JSON Schema に従う JSON だけを出力してください:\n${JSON.stringify(schema)}` };
-      content = await this.complete(messages, { type: 'json_object' });
+      content = await this.complete(messages, signal, { type: 'json_object' });
     }
     let parsed = BlocksSchema.safeParse(extractJson(content));
     if (!parsed.success) {
       messages.push({ role: 'assistant', content }, { role: 'user', content: `出力がスキーマに合いません: ${parsed.error.message.slice(0, 800)}\n修正した JSON だけを出力してください。` });
-      parsed = BlocksSchema.safeParse(extractJson(await this.complete(messages, { type: 'json_object' })));
+      parsed = BlocksSchema.safeParse(extractJson(await this.complete(messages, signal, { type: 'json_object' })));
     }
     if (!parsed.success) throw new AiStop('ローカル LLM の出力を作業ブロックとして読み取れませんでした。より大きなモデルを試してください。');
     return { blocks: parsed.data.blocks, model: this.model };
@@ -109,8 +109,8 @@ export class LocalProvider implements Provider {
     throw new AiStop('ツール呼び出しが多すぎるため中断しました');
   }
 
-  private async complete(messages: Msg[], response_format: OpenAI.Chat.ChatCompletionCreateParams['response_format']) {
-    const res = await this.client.chat.completions.create({ model: this.model, messages, response_format, temperature: 0.2 });
+  private async complete(messages: Msg[], signal: AbortSignal, response_format: OpenAI.Chat.ChatCompletionCreateParams['response_format']) {
+    const res = await this.client.chat.completions.create({ model: this.model, messages, response_format, temperature: 0.2 }, { signal });
     return stripThink(res.choices[0]?.message?.content ?? '');
   }
 

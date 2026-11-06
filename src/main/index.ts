@@ -270,7 +270,7 @@ AI の作業ブロックと日報も含めて削除され、元に戻せませ�
   handle('ai:preview', (_e, date) => ({ text: ai.preview(assertDate(date)), destination: ai.destination() }));
   handle('ai:cancel', (_e, reqId) => ai.cancel(reqIdOf(reqId)));
   handle('ai:save', (_e, date, patch) => store.writeAi(assertDate(date), AiPatch.parse(patch)));
-  handle('ai:segment', (_e, date) => aiCall(async () => ({ ai: await ai.segment(assertDate(date)) })));
+  handle('ai:segment', (_e, date, reqId) => aiCall(async () => ({ ai: await ai.segment(assertDate(date), reqIdOf(reqId)) })));
   handle('ai:report', (e, date, reqId) => aiCall(async () => ({ ai: await ai.report(assertDate(date), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId))) })));
   handle('ai:ask', (e, question, reqId, range) =>
     aiCall(async () => {

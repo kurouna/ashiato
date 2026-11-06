@@ -43,10 +43,11 @@ export class Ai {
     this.running.get(reqId)?.abort();
   }
 
-  async segment(date: string): Promise<DayAi> {
+  async segment(date: string, reqId: string): Promise<DayAi> {
     const timeline = this.requireTimeline(date);
     const provider = await this.provider();
-    const res = await provider.segment(SEGMENT_SYSTEM, `日付: ${date}\n\n<timeline>\n${timeline}\n</timeline>`);
+    const user = `日付: ${date}\n\n<timeline>\n${timeline}\n</timeline>`;
+    const res = await this.withAbort(reqId, (signal) => provider.segment(SEGMENT_SYSTEM, user, signal));
     const blocks: WorkBlock[] = reviewBreaks(cleanBlocks(res.blocks), this.store.readDay(date), startOfDay(date));
     if (!blocks.length) throw new AiStop('作業ブロックを作れませんでした');
     return this.store.writeAi(date, { blocks, blocksAt: Date.now(), model: res.model });
