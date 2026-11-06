@@ -102,6 +102,18 @@
           </div>
 
           <div class="pane hidden" data-pane="ask">
+            <div class="askscope">
+              <label for="askRange">対象期間</label>
+              <select id="askRange">
+                <option value="7">直近 7 日</option>
+                <option value="30" selected>直近 30 日</option>
+                <option value="90">直近 90 日</option>
+                <option value="all">すべて</option>
+                <option value="custom">期間を指定…</option>
+              </select>
+              <span id="askCustom" class="hidden"><input type="date" id="askFrom" aria-label="開始日" /> 〜 <input type="date" id="askTo" aria-label="終了日" /></span>
+              <span class="muted small">AI が参照・送信するのはこの期間の記録だけです</span>
+            </div>
             <div id="chatLog" class="chat">
               <div class="suggest">
                 <p class="muted">記録をもとに AI が答えます。必要に応じて他の日の記録も検索します。例えば：</p>
@@ -210,6 +222,7 @@
             <label>サンプリング間隔（秒） <input type="number" id="poll" min="1" max="60" /></label>
             <label>保存期間（日・0 で無期限） <input type="number" id="retention" min="0" max="3650" /></label>
           </div>
+          <small class="muted"><span id="dataStats"></span>　目安: 1 日 60〜120 KB、1 年で 15〜30 MB 程度です。保存期間を短くすると、その時点で古い記録を削除します（確認があります）。</small>
         </fieldset>
 
         <fieldset>

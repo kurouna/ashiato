@@ -10,6 +10,11 @@ import { ASK_SYSTEM, AiStop, ChatTurn, Emit, Provider, REPORT_SYSTEM, SEGMENT_SY
 
 const MAX_CHAT_TURNS = 20;
 
+export interface AskRange {
+  from?: string;
+  to?: string;
+}
+
 export class Ai {
   private chat: ChatTurn[] = [];
   private running = new Map<string, AbortController>();
@@ -61,16 +66,23 @@ export class Ai {
     return this.store.writeAi(date, { report: res.text, reportAt: Date.now(), model: res.model });
   }
 
-  async ask(question: string, reqId: string, emit: Emit): Promise<string> {
+  /** range limits every tool to those days, so a question never reads (or sends) more history than chosen. */
+  async ask(question: string, reqId: string, emit: Emit, range: AskRange = {}): Promise<string> {
     const provider = await this.provider();
     const now = new Date();
     const stamp = `${dayKey(now.getTime())} (${'日月火水木金土'[now.getDay()]}) ${hhmm(now.getTime())}`;
-    const turns: ChatTurn[] = [...this.chat, { role: 'user', content: `[現在: ${stamp}]\n${question}` }];
-    const answer = await this.withAbort(reqId, (signal) => provider.ask(ASK_SYSTEM, turns, this.tools(), emit, signal, () => this.recentDays(7)));
-    // keep the visible conversation only; tools are re-run on demand
-    this.chat = [...turns, { role: 'assistant' as const, content: answer || '（回答なし）' }].slice(-MAX_CHAT_TURNS);
-    if (this.chat[0]?.role === 'assistant') this.chat.shift();
-    return answer;
+    const scope = range.from || range.to ? `[対象期間: ${range.from ?? '最初'} 〜 ${range.to ?? '今日'}。この期間外の記録は参照できません]\n` : '';
+    const turns: ChatTurn[] = [...this.chat, { role: 'user', content: `[現在: ${stamp}]\n${scope}${question}` }];
+    try {
+      const answer = await this.withAbort(reqId, (signal) => provider.ask(ASK_SYSTEM, turns, this.tools(range), emit, signal, () => this.recentDays(7, range)));
+      // keep the visible conversation only; tools are re-run on demand
+      this.chat = [...turns, { role: 'assistant' as const, content: answer || '（回答なし）' }].slice(-MAX_CHAT_TURNS);
+      if (this.chat[0]?.role === 'assistant') this.chat.shift();
+      return answer;
+    } finally {
+      // questions are occasional; do not keep the history they read resident
+      this.store.releaseCache();
+    }
   }
 
   describeError(err: unknown): string {
@@ -108,29 +120,35 @@ export class Ai {
     }
   }
 
-  private recentDays(n: number): string {
-    return this.store
-      .listDays()
+  private daysIn(range: AskRange): string[] {
+    return this.store.listDays().filter((d) => (!range.from || d >= range.from) && (!range.to || d <= range.to));
+  }
+
+  private recentDays(n: number, range: AskRange): string {
+    return this.daysIn(range)
       .slice(-n)
       .map((d) => `# ${d}\n${this.preview(d)}`)
       .join('\n\n')
       .slice(-60_000);
   }
 
-  private tools() {
+  private tools(range: AskRange) {
     const store = this.store;
+    const inRange = (d: string) => (!range.from || d >= range.from) && (!range.to || d <= range.to);
+    const outside = (d: string) => `${d} は対象期間（${range.from ?? '最初'} 〜 ${range.to ?? '今日'}）の外です`;
     return [
       defineTool({
         name: 'list_days',
         description: '記録がある日付の一覧と、各日のアクティブ時間（分）・イベント数を返す。',
         schema: z.object({}),
-        run: async () => JSON.stringify(store.summarizeDays()),
+        run: async () => JSON.stringify(store.summarizeDays().filter((d) => inRange(d.date))),
       }),
       defineTool({
         name: 'get_day',
         description: '指定日のタイムライン（整理済みなら作業ブロックと日報も）を返す。date は YYYY-MM-DD。',
         schema: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
         run: async ({ date }) => {
+          if (!inRange(date)) return outside(date);
           const timeline = this.preview(date);
           if (!timeline) return `${date} の記録はありません`;
           const ai = store.readAi(date);
@@ -152,7 +170,7 @@ export class Ai {
         run: async ({ query, from, to }) => {
           const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
           const hits: string[] = [];
-          for (const date of store.listDays()) {
+          for (const date of this.daysIn(range)) {
             if ((from && date < from) || (to && date > to)) continue;
             for (const e of store.readDay(date)) {
               const text =

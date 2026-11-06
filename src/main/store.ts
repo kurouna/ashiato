@@ -56,6 +56,9 @@ export const SettingsPatch = z
   .partial()
   .strict();
 
+/** Days kept parsed in memory; searching a whole year would otherwise keep it all resident. */
+const DAY_CACHE_MAX = 14;
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export function assertDate(date: unknown): string {
   if (typeof date !== 'string' || !DATE_RE.test(date)) throw new Error('日付の形式が不正です');
@@ -189,7 +192,9 @@ export class Store {
       }
     }
     out.sort((a, b) => evTime(a) - evTime(b));
+    this.dayCache.delete(date); // re-insert so the Map order is least-recently-used first
     this.dayCache.set(date, { stamp, events: out });
+    while (this.dayCache.size > DAY_CACHE_MAX) this.dayCache.delete(this.dayCache.keys().next().value!);
     return out;
   }
 
@@ -226,13 +231,32 @@ export class Store {
     this.dayCache.delete(date);
   }
 
-  purgeExpired(): number {
-    const days = this.settings.retentionDays;
-    if (!days) return 0;
+  /** Days a retention of `days` would remove (0 = keep forever). */
+  expiredDays(days: number): string[] {
+    if (!days) return [];
     const cutoff = dayKey(Date.now() - days * 86400_000);
-    const old = this.listDays().filter((d) => d < cutoff);
+    return this.listDays().filter((d) => d < cutoff);
+  }
+
+  purgeExpired(): number {
+    const old = this.expiredDays(this.settings.retentionDays);
     for (const d of old) this.deleteDay(d);
     return old.length;
+  }
+
+  /** Free parsed days, e.g. after a search over the whole history. */
+  releaseCache() {
+    this.dayCache.clear();
+  }
+
+  /** How much is on disk, for the settings screen. */
+  stats(): { days: number; first: string | null; last: string | null; bytes: number } {
+    const days = this.listDays();
+    let bytes = 0;
+    for (const f of fs.readdirSync(this.dir)) {
+      if (/^\d{4}-\d{2}-\d{2}\.(jsonl|ai\.json)$/.test(f)) bytes += fs.statSync(path.join(this.dir, f)).size;
+    }
+    return { days: days.length, first: days[0] ?? null, last: days.at(-1) ?? null, bytes };
   }
 
   private get checkpointFile() {

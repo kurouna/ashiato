@@ -32,6 +32,9 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- helpers ----------
+function fmtBytes(n: number) {
+  return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
 function fmtDur(ms: number) {
   const m = Math.round(ms / 60000);
   return m >= 60 ? `${Math.floor(m / 60)}時間${String(m % 60).padStart(2, '0')}分` : `${m}分`;
@@ -258,6 +261,27 @@ function bubble(cls: string, html: string) {
   return div;
 }
 
+/** The days 「足跡に聞く」 may read, from the period picker. */
+function askRange(): { from?: string; to?: string } {
+  const v = $<HTMLSelectElement>('askRange').value;
+  const today = dayKey(Date.now());
+  if (v === 'all') return {};
+  if (v === 'custom') {
+    const from = $<HTMLInputElement>('askFrom').value || undefined;
+    const to = $<HTMLInputElement>('askTo').value || undefined;
+    return from && to && from > to ? { from: to, to: from } : { from, to };
+  }
+  return { from: dayKey(Date.now() - (Number(v) - 1) * 86400_000), to: today };
+}
+$('askRange').addEventListener('change', () => {
+  const custom = $<HTMLSelectElement>('askRange').value === 'custom';
+  $('askCustom').classList.toggle('hidden', !custom);
+  if (custom && !$<HTMLInputElement>('askFrom').value) {
+    $<HTMLInputElement>('askFrom').value = dayKey(Date.now() - 6 * 86400_000);
+    $<HTMLInputElement>('askTo').value = dayKey(Date.now());
+  }
+});
+
 async function ask(q: string) {
   if (askReq || !q.trim()) return;
   const reqId = (askReq = newReq());
@@ -288,7 +312,7 @@ async function ask(q: string) {
     }
     chatLog.scrollTop = chatLog.scrollHeight;
   });
-  const res = await api.ask(q, reqId);
+  const res = await api.ask(q, reqId, askRange());
   streams.delete(reqId);
   body.innerHTML = res.ok ? md(res.answer || text) : `<span class="err">${esc(res.error)}</span>`;
   askReq = null;
@@ -469,6 +493,11 @@ function fillSettings() {
   $<HTMLInputElement>('idleMin').value = String(settings.idleMinutes);
   $<HTMLInputElement>('poll').value = String(settings.pollSeconds);
   $<HTMLInputElement>('retention').value = String(settings.retentionDays);
+  api.dataStats().then((st) => {
+    $('dataStats').textContent = st.days
+      ? `現在の記録: ${st.days} 日分（${st.first} 〜 ${st.last}）・${fmtBytes(st.bytes)}`
+      : '現在の記録: まだありません';
+  });
   $<HTMLTextAreaElement>('template').value = settings.reportTemplate;
   $<HTMLInputElement>('openAtLogin').checked = settings.openAtLogin;
   $('settingsMsg').textContent = '';
@@ -596,7 +625,7 @@ const num = (id: string, fallback: number) => {
 };
 $('saveSettings').addEventListener('click', async () => {
   try {
-    settings = await api.setSettings({
+    const saved = await api.setSettings({
       provider: (radios().find((r) => r.checked)?.value ?? 'claude') as 'claude' | 'local',
       model: $<HTMLSelectElement>('model').value,
       localBaseUrl: $<HTMLInputElement>('localUrl').value.trim() || 'http://localhost:11434/v1',
@@ -611,7 +640,15 @@ $('saveSettings').addEventListener('click', async () => {
       reportTemplate: $<HTMLTextAreaElement>('template').value,
       openAtLogin: $<HTMLInputElement>('openAtLogin').checked,
     });
+    const { retentionKept, ...rest } = saved;
+    settings = rest;
     renderRec();
+    if (retentionKept) {
+      // the user backed out of deleting old days: everything else is saved, the period is not
+      $<HTMLInputElement>('retention').value = String(settings.retentionDays);
+      $('settingsMsg').textContent = '保存期間は変更しませんでした（ほかの設定は保存しました）';
+      return;
+    }
     dlg.close();
   } catch (err) {
     $('settingsMsg').textContent = `保存できませんでした: ${ipcMessage(err)}`;

@@ -205,7 +205,27 @@ function registerIpc() {
   handle('days:list', () => store.summarizeDays());
   handle('status:get', () => status());
   handle('settings:get', () => store.getPublicSettings());
-  handle('settings:set', (_e, patch) => applySettings(patch));
+  handle('settings:set', async (_e, patch) => {
+    // shortening the retention deletes days right away: say which, and let the user back out
+    const days = (patch as Partial<Settings> | null)?.retentionDays;
+    if (typeof days === 'number') {
+      const doomed = store.expiredDays(days);
+      if (doomed.length) {
+        const { response } = await dialog.showMessageBox(mainWin!, {
+          type: 'warning',
+          buttons: ['削除して保存', 'キャンセル'],
+          defaultId: 1,
+          cancelId: 1,
+          message: `保存期間を ${days} 日にすると、古い記録 ${doomed.length} 日分を削除します。`,
+          detail: `対象: ${doomed[0]} 〜 ${doomed.at(-1)}
+AI の作業ブロックと日報も含めて削除され、元に戻せません。`,
+        });
+        if (response !== 0) return { ...applySettings({ ...patch, retentionDays: store.getSettings().retentionDays }), retentionKept: true };
+      }
+    }
+    return applySettings(patch);
+  });
+  handle('data:stats', () => store.stats());
   handle('settings:setSecret', async (_e, name, key) => {
     await store.setSecret(z.enum(['claude', 'local']).parse(name), key === null ? null : z.string().max(500).parse(key));
     broadcast('settings:changed', store.getPublicSettings());
@@ -252,7 +272,13 @@ function registerIpc() {
   handle('ai:save', (_e, date, patch) => store.writeAi(assertDate(date), AiPatch.parse(patch)));
   handle('ai:segment', (_e, date) => aiCall(async () => ({ ai: await ai.segment(assertDate(date)) })));
   handle('ai:report', (e, date, reqId) => aiCall(async () => ({ ai: await ai.report(assertDate(date), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId))) })));
-  handle('ai:ask', (e, question, reqId) => aiCall(async () => ({ answer: await ai.ask(z.string().min(1).max(4000).parse(question), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId))) })));
+  handle('ai:ask', (e, question, reqId, range) =>
+    aiCall(async () => {
+      const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+      const r = z.object({ from: date.optional(), to: date.optional() }).strict().parse(range ?? {});
+      return { answer: await ai.ask(z.string().min(1).max(4000).parse(question), reqIdOf(reqId), streamTo(e.sender, reqIdOf(reqId)), r) };
+    }),
+  );
   handle('ai:resetChat', () => ai.resetChat());
   handle('local:models', (_e, baseUrl) =>
     aiCall(async () => ({ models: await LocalProvider.listModels(z.string().max(500).regex(/^https?:\/\/\S+$/i,'http(s) の URL を指定してください').parse(baseUrl), await store.getSecret('local')) })),
