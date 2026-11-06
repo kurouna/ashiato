@@ -1,6 +1,6 @@
 {
   "name": "ashiato",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "PC 作業を自動記録し、Claude が作業ブロック整理・日報生成・履歴への質問応答をするデスクトップアプリ",
   "main": "dist/main.js",
   "scripts": {
