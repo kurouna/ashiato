@@ -337,6 +337,7 @@ if (gotLock) {
 
     let pending: NodeJS.Timeout | undefined;
     const dates = new Set<string>();
+    recorder.on('health', () => broadcast('status:changed', status()));
     recorder.on('changed', (date: string) => {
       dates.add(date);
       pending ??= setTimeout(() => {

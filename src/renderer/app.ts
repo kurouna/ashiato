@@ -491,10 +491,12 @@ function renderRec() {
   }
   const paused = settings.paused;
   const until = paused && settings.pausedUntil ? `（${new Date(settings.pausedUntil).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}まで）` : '';
-  const broken = settings.onboarded && !paused && status && !status.probeOk;
+  // right after launch the probe has not answered yet: that is not a failure
+  const starting = settings.onboarded && !paused && status && !status.probeOk && status.probeReason === '起動中';
+  const broken = settings.onboarded && !paused && status && !status.probeOk && !starting;
   $('recToggle').classList.toggle('paused', paused || !settings.onboarded);
   $('recToggle').classList.toggle('broken', !!broken);
-  $('recLabel').textContent = !settings.onboarded ? '未開始' : paused ? `一時停止中${until}` : broken ? '記録できていません' : '記録中';
+  $('recLabel').textContent = !settings.onboarded ? '未開始' : paused ? `一時停止中${until}` : broken ? '記録できていません' : starting ? '記録を準備中…' : '記録中';
   $('destLabel').textContent = settings.provider === 'local' ? '🔒 ローカル LLM' : '☁ Claude API';
   $('destLabel').title = status?.destination ?? '';
 

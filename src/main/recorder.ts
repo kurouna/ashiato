@@ -109,6 +109,7 @@ export class Recorder extends EventEmitter {
       this.probe?.stop();
       return;
     }
+    if (!this.probe) this.lastSampleAt = null;
     this.probe ??= new ActiveWindowProbe(Math.max(1, s.pollSeconds) * 1000, (sample) => this.onSample(sample), s.detectCalls);
     this.probe.start();
   }
@@ -139,7 +140,11 @@ export class Recorder extends EventEmitter {
   private onSample(sample: WindowSample | null) {
     const now = Date.now();
     const s = this.store.getSettings();
-    if (sample) this.lastSampleAt = now;
+    if (sample) {
+      // the first sample after a (re)start flips the header from "starting" to "recording" without waiting for the next status tick
+      if (this.lastSampleAt === null) queueMicrotask(() => this.emit('health'));
+      this.lastSampleAt = now;
+    }
     if (s.paused) return this.closeAll(now);
     if (sample) this.trackCall(sample, now);
 
