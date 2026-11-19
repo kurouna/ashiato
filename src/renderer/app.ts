@@ -17,6 +17,9 @@ const streams = new Map<string, (e: StreamEvent) => void>();
 api.onStream((e) => streams.get(e.reqId)?.(e));
 const newReq = () => crypto.randomUUID();
 
+/** when AI results were made, e.g. 11/19 01:02: the date matters because a day is often reopened later */
+const fmtStamp = (ts: number) => new Date(ts).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
 function md(text: string) {
   return DOMPurify.sanitize(marked.parse(text, { async: false }) as string, {
     FORBID_TAGS: ['form', 'input', 'button', 'textarea', 'select', 'style', 'iframe', 'img'],
@@ -143,7 +146,7 @@ function renderBlocks(blocks?: WorkBlock[]) {
 function renderReport(report?: string) {
   $('reportBody').innerHTML = report ? md(report) : `<p class="muted">記録と作業ブロックから、AI が日報の下書きを書きます。生成後は「編集」で直せます。テンプレートは ⚙ で変更できます。</p>`;
   for (const id of ['copyReport', 'copyPlain', 'editReport']) $(id).toggleAttribute('disabled', !report);
-  if (!reportBusy) setStatus('reportStatus', day?.ai.reportAt ? `${new Date(day.ai.reportAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 保存` : '');
+  if (!reportBusy) setStatus('reportStatus', day?.ai.reportAt ? `${fmtStamp(day.ai.reportAt)} 保存` : '');
 }
 
 $('deleteDay').addEventListener('click', async () => {
@@ -213,7 +216,7 @@ function renderSegmentStatus() {
     return setStatus('segmentStatus', text, 'busy');
   }
   if (segmentNote) return setStatus('segmentStatus', segmentNote, segmentNote.startsWith('✓') ? 'muted' : 'err');
-  setStatus('segmentStatus', day?.ai.blocksAt ? `${new Date(day.ai.blocksAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} に整理（${day.ai.model ?? ''}）` : '');
+  setStatus('segmentStatus', day?.ai.blocksAt ? `${fmtStamp(day.ai.blocksAt)} に整理（${day.ai.model ?? ''}）` : '');
 }
 setInterval(() => segmentJob && renderSegmentStatus(), 1000);
 
